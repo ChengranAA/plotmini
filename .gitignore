@@ -7,4 +7,5 @@ examples/01_basic
 examples/02_histogram
 examples/03_styling
 examples/04_imshow
+examples/05_subplot
 examples/dep
