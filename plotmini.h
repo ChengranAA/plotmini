@@ -659,6 +659,30 @@ static void plm__wu_line(plm_fb *fb, int x0, int y0, int x1, int y1, plm_color c
     }
 }
 
+static void plm__wu_line_thick(plm_fb *fb, int x0, int y0, int x1, int y1,
+                               plm_color c, float width) {
+    if (width <= 1.0f) {
+        plm__wu_line(fb, x0, y0, x1, y1, c);
+        return;
+    }
+    int n = (int)(width + 0.5f);
+    float half = (width - 1.0f) * 0.5f;
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+    float len = sqrtf((float)(dx*dx + dy*dy));
+    if (len < 1.0f) len = 1.0f;
+    float px = -(float)dy / len;
+    float py =  (float)dx / len;
+    int i;
+    for (i = 0; i < n; i++) {
+        float off = (float)i - half;
+        plm__wu_line(fb,
+            (int)((float)x0 + px * off + 0.5f),
+            (int)((float)y0 + py * off + 0.5f),
+            (int)((float)x1 + px * off + 0.5f),
+            (int)((float)y1 + py * off + 0.5f), c);
+    }
+}
 /* ---- embedded bitmap font ------------------------------------------ */
 #ifndef PLOTMINI_NO_FONT
 
@@ -914,8 +938,8 @@ static void plm__axis_autorange(plm_axis *ax,
 
     if (is_y) {
         /* Y-axis with histograms: pre-compute bin max, range from 0 */
-        lo = 0.0;
-        hi = 0.0;
+        if (lo > 0.0) lo = 0.0;
+        if (hi < 0.0) hi = 0.0;
         for (i = 0; i < hc; i++) {
             if (hists[i].count <= 0) continue;
             int bins = hists[i].bins;
@@ -1127,7 +1151,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
                     if (plm__clip_line(&ix0, &iy0, &ix1, &iy1,
                                        p->plot_area.x0, p->plot_area.y0,
                                        p->plot_area.x1 - 1, p->plot_area.y1 - 1)) {
-                        plm__wu_line(fb, ix0, iy0, ix1, iy1, ls->style.color);
+                        plm__wu_line_thick(fb, ix0, iy0, ix1, iy1, ls->style.color, ls->style.width);
                     }
                 }
                 if (seg_start < 0) seg_start = i;

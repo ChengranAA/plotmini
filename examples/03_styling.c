@@ -71,7 +71,7 @@ int main(void) {
             x[i] = (float)i * 0.2f;
             y[i] = 1.0f - (float)i * 0.01f + 0.2f * cosf((float)i * 0.3f);
         }
-        plm_line_style s = { PLM_RED, 2.0f, "decay" };
+        plm_line_style s = { PLM_GREEN, 5.0f, "decay" };
         plm_plot_add_line(&plot, x, y, n, s);
         free(x); free(y);
     }
