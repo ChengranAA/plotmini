@@ -173,6 +173,17 @@ typedef struct plm_plot {
     int          fb_h;        /* framebuffer height at last render      */
 } plm_plot;
 
+/* A grid of subplots.  Each cell holds an independent plm_plot.
+   Create with plm_figure_init(), fill each cell via plm_figure_plot(),
+   then render everything with plm_figure_render().                      */
+typedef struct plm_figure {
+    int          nrows;
+    int          ncols;
+    int          hgap;        /* horizontal gap between cells (pixels)   */
+    int          vgap;        /* vertical   gap between cells (pixels)   */
+    plm_plot    *plots;       /* array[nrows * ncols], owned by figure   */
+} plm_figure;
+
 /* ------------------------------------------------------------------ */
 /*  PUBLIC API  (declarations)                                        */
 /* ------------------------------------------------------------------ */
@@ -233,6 +244,25 @@ void   plm_plot_add_hist(plm_plot *p,
    Layout (margins, tick labels) is recomputed every call, so you can
    call this repeatedly with different fb sizes or updated data. */
 void   plm_render(const plm_plot *p, plm_fb *fb);
+
+/* ---- subplot / figure ---------------------------------------------- */
+
+/* Initialise a figure with `nrows` x `ncols` grid of subplots.
+   All plots are pre-allocated; access them with plm_figure_plot().
+   Default gaps: 20 px horizontal, 20 px vertical.                     */
+void     plm_figure_init(plm_figure *fig, int nrows, int ncols);
+
+/* Return a pointer to the plot at (row, col).  Both 0-based.
+   Fill the returned plm_plot with series, labels, styles as usual.   */
+plm_plot *plm_figure_plot(plm_figure *fig, int row, int col);
+
+/* Render all subplots into one framebuffer.  Clears fb once, then
+   renders each plot into its cell.  Margins & labels stay within
+   each cell.                                                           */
+void     plm_figure_render(const plm_figure *fig, plm_fb *fb);
+
+/* Free all internal storage; figure can be re-init'd or discarded.    */
+void     plm_figure_reset(plm_figure *fig);
 
 /* ---- text helpers (optional, only if PLOTMINI_NO_FONT is not set) -- */
 
@@ -1042,32 +1072,32 @@ static float plm__map_y(const plm_plot *p, double val) {
 
 /* ---- core render --------------------------------------------------- */
 
-void plm_render(const plm_plot *p, plm_fb *fb) {
-    plm_plot *pp = (plm_plot *)p;  /* cast away const for autorange writes */
-
+/* Render one plot into a rectangular cell of the framebuffer.
+   cell_x0,cell_y0  = top-left of the cell in fb pixel coords.
+   cell_x1,cell_y1  = bottom-right (exclusive).                         */
+static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
+                                   int cell_x0, int cell_y0,
+                                   int cell_x1, int cell_y1) {
     /* 1. auto-range if requested */
-    if (pp->x_axis.min == pp->x_axis.max) {
-        plm__axis_autorange(&pp->x_axis, p->lines, p->line_count,
+    if (p->x_axis.min == p->x_axis.max) {
+        plm__axis_autorange(&p->x_axis, p->lines, p->line_count,
                              p->hists, p->hist_count, 0);
     }
-    if (pp->y_axis.min == pp->y_axis.max) {
-        plm__axis_autorange(&pp->y_axis, p->lines, p->line_count,
+    if (p->y_axis.min == p->y_axis.max) {
+        plm__axis_autorange(&p->y_axis, p->lines, p->line_count,
                              p->hists, p->hist_count, 1);
     }
 
-    /* 2. compute plot area in pixels */
-    pp->plot_area.x0 = p->margin_left;
-    pp->plot_area.y0 = p->margin_top;
-    pp->plot_area.x1 = fb->width  - p->margin_right;
-    pp->plot_area.y1 = fb->height - p->margin_bottom;
+    /* 2. compute plot area in pixels (inset from cell by margins) */
+    p->plot_area.x0 = cell_x0 + p->margin_left;
+    p->plot_area.y0 = cell_y0 + p->margin_top;
+    p->plot_area.x1 = cell_x1 - p->margin_right;
+    p->plot_area.y1 = cell_y1 - p->margin_bottom;
 
-    pp->fb_w = fb->width;
-    pp->fb_h = fb->height;
+    p->fb_w = cell_x1 - cell_x0;
+    p->fb_h = cell_y1 - cell_y0;
 
-    /* 3. clear to white */
-    plm_fb_clear(fb, PLM_WHITE);
-
-    /* 4. draw plot-area background */
+    /* 3. draw plot-area background */
     {
         plm_irect bg;
         bg.x0 = p->plot_area.x0; bg.y0 = p->plot_area.y0;
@@ -1075,7 +1105,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
         plm_fb_fill_rect(fb, bg, PLM_WHITE);
     }
 
-    /* 5. draw grid lines (X axis - major) */
+    /* 4. draw grid lines (X axis - major) */
     if (p->x_axis.grid >= 1) {
         double range = p->x_axis.max - p->x_axis.min;
         double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
@@ -1095,7 +1125,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
         }
     }
 
-    /* 6. draw grid lines (Y axis - major) */
+    /* 5. draw grid lines (Y axis - major) */
     if (p->y_axis.grid >= 1) {
         double range = p->y_axis.max - p->y_axis.min;
         double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
@@ -1115,7 +1145,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
         }
     }
 
-    /* 7. draw axis spines (the L-shape) */
+    /* 6. draw axis spines (the L-shape) */
     {
         plm_color ax_c = PLM_BLACK;
         /* bottom */
@@ -1128,7 +1158,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
           plm_fb_fill_rect(fb, r, ax_c); }
     }
 
-    /* 8. draw line series */
+    /* 7. draw line series */
     {
         int si;
         for (si = 0; si < p->line_count; si++) {
@@ -1159,7 +1189,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
         }
     }
 
-    /* 9. draw histogram series */
+    /* 8. draw histogram series */
     {
         int si;
         for (si = 0; si < p->hist_count; si++) {
@@ -1250,26 +1280,26 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
         }
     }
 
-    /* 10. draw title */
+    /* 9. draw title (centred within the cell) */
     if (p->title) {
         int tw = plm_text_width(p->title);
-        plm_draw_text(fb, (fb->width - tw) / 2, 20, p->title, PLM_BLACK);
+        int cx = cell_x0 + (cell_x1 - cell_x0) / 2;
+        plm_draw_text(fb, cx - tw / 2, cell_y0 + 20, p->title, PLM_BLACK);
     }
 
-    /* 11. draw axis labels */
+    /* 10. draw axis labels */
     if (p->x_label) {
         int tw = plm_text_width(p->x_label);
         int cx = p->plot_area.x0 + (p->plot_area.x1 - p->plot_area.x0) / 2;
-        plm_draw_text(fb, cx - tw / 2, fb->height - 5, p->x_label, PLM_BLACK);
+        plm_draw_text(fb, cx - tw / 2, cell_y1 - 5, p->x_label, PLM_BLACK);
     }
     if (p->y_label) {
-        /* vertical would be nice, but for now draw horizontally
-           near the left edge. */
+        /* horizontal text near the left edge of the cell */
         int ty = p->plot_area.y0 + (p->plot_area.y1 - p->plot_area.y0) / 2;
-        plm_draw_text(fb, 2, ty, p->y_label, PLM_BLACK);
+        plm_draw_text(fb, cell_x0 + 2, ty, p->y_label, PLM_BLACK);
     }
 
-    /* 12. draw tick labels */
+    /* 11. draw tick labels */
     {
         double range = p->x_axis.max - p->x_axis.min;
         double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
@@ -1304,6 +1334,96 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
             }
         }
     }
+}
+
+/* Public: render a single plot (fills the whole framebuffer). */
+void plm_render(const plm_plot *p, plm_fb *fb) {
+    plm_plot *pp = (plm_plot *)p;  /* cast away const for autorange writes */
+
+    /* clear the whole framebuffer once */
+    plm_fb_clear(fb, PLM_WHITE);
+
+    /* delegate to the cell-based renderer */
+    plm__render_plot_into(pp, fb, 0, 0, fb->width, fb->height);
+}
+
+/* ---- subplot / figure ---------------------------------------------- */
+
+void plm_figure_init(plm_figure *fig, int nrows, int ncols) {
+    int i, total;
+    memset(fig, 0, sizeof(*fig));
+    fig->nrows = nrows < 1 ? 1 : nrows;
+    fig->ncols = ncols < 1 ? 1 : ncols;
+    fig->hgap  = 20;
+    fig->vgap  = 20;
+    total = fig->nrows * fig->ncols;
+    fig->plots = (plm_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm_plot));
+    for (i = 0; i < total; i++) {
+        plm_plot *p = &fig->plots[i];
+        plm_plot_init(p);
+        /* Subplot cells have tighter space: reduce default margins. */
+        p->margin_left   = 45;
+        p->margin_top    = 22;
+        p->margin_right  = 12;
+        p->margin_bottom = 28;
+    }
+}
+
+plm_plot *plm_figure_plot(plm_figure *fig, int row, int col) {
+    if (!fig || !fig->plots) return NULL;
+    if (row < 0 || row >= fig->nrows || col < 0 || col >= fig->ncols)
+        return NULL;
+    return &fig->plots[row * fig->ncols + col];
+}
+
+void plm_figure_render(const plm_figure *fig, plm_fb *fb) {
+    int r, c;
+    int cell_w, cell_h;
+    int fig_w, fig_h;
+    int fig_x0, fig_y0, fig_x1, fig_y1;
+
+    if (!fig || !fig->plots || fig->nrows < 1 || fig->ncols < 1) return;
+
+    /* 1. clear entire framebuffer once */
+    plm_fb_clear(fb, PLM_WHITE);
+
+    /* 2. compute figure content bounds (we use the full fb for simplicity) */
+    fig_x0 = 0;
+    fig_y0 = 0;
+    fig_x1 = fb->width;
+    fig_y1 = fb->height;
+    fig_w  = fig_x1 - fig_x0;
+    fig_h  = fig_y1 - fig_y0;
+
+    /* 3. cell size: distribute remaining space after gaps */
+    cell_w = (fig_w - (fig->ncols - 1) * fig->hgap) / fig->ncols;
+    cell_h = (fig_h - (fig->nrows - 1) * fig->vgap) / fig->nrows;
+    if (cell_w < 40) cell_w = 40;
+    if (cell_h < 40) cell_h = 40;
+
+    /* 4. render each cell */
+    for (r = 0; r < fig->nrows; r++) {
+        for (c = 0; c < fig->ncols; c++) {
+            int cell_x0 = fig_x0 + c * (cell_w + fig->hgap);
+            int cell_y0 = fig_y0 + r * (cell_h + fig->vgap);
+            int cell_x1 = cell_x0 + cell_w;
+            int cell_y1 = cell_y0 + cell_h;
+
+            plm_plot *p = &fig->plots[r * fig->ncols + c];
+            plm__render_plot_into(p, fb, cell_x0, cell_y0, cell_x1, cell_y1);
+        }
+    }
+}
+
+void plm_figure_reset(plm_figure *fig) {
+    int i, total;
+    if (!fig || !fig->plots) return;
+    total = fig->nrows * fig->ncols;
+    for (i = 0; i < total; i++) {
+        plm_plot_reset(&fig->plots[i]);
+    }
+    PLOTMINI_FREE(fig->plots);
+    memset(fig, 0, sizeof(*fig));
 }
 
 #endif /* PLOTMINI_IMPLEMENTATION */
