@@ -45,7 +45,7 @@ int main(void) {
             x[i] = (float)i * 0.05f;
             y[i] = sinf(x[i]) * 1.5f;
         }
-        plm_line_style s = { PLM_RED, 0.0f, "sin(x)", 0};
+        plm_line_style s = { PLM_RED, 0.0f, "sin(x)", 0, 0};
         plm_plot_add_line(&plot, x, y, n, s);
         free(x); free(y);
     }
@@ -58,7 +58,7 @@ int main(void) {
             x[i] = (float)i * 0.7f;
             y[i] = 0.5f * sinf(x[i] * 0.7f) * cosf(x[i] * 0.3f);
         }
-        plm_line_style s = { PLM_BLUE, 0.0f, "modulated", 0};
+        plm_line_style s = { PLM_BLUE, 0.0f, "modulated", 0, 0};
         plm_plot_add_line(&plot, x, y, n, s);
         free(x); free(y);
     }
@@ -71,7 +71,7 @@ int main(void) {
             x[i] = (float)i * 0.2f;
             y[i] = 1.0f - (float)i * 0.01f + 0.2f * cosf((float)i * 0.3f);
         }
-        plm_line_style s = { PLM_GREEN, 5.0f, "decay", 0};
+        plm_line_style s = { PLM_GREEN, 5.0f, "decay", 0, 0};
         plm_plot_add_line(&plot, x, y, n, s);
         free(x); free(y);
     }

@@ -83,13 +83,13 @@ int main(void) {
                 sx[i] = tx[idx];
                 sy[i] = sig[idx];
             }
-            plm_line_style ls = { PLM_YELLOW, 2.5f, "step-post envelope", PLM_STEP_POST };
+            plm_line_style ls = { PLM_YELLOW, 2.5f, "step-post envelope", PLM_STEP_POST , 0};
             plm_plot_add_line(p, sx, sy, sn, ls);
         }
 
         /* fine signal line */
         {
-            plm_line_style ls = { PLM_WHITE, 1.0f, "raw signal", 0 };
+            plm_line_style ls = { PLM_WHITE, 1.0f, "raw signal", 0 , 0};
             plm_plot_add_line(p, tx, sig, n, ls);
         }
 
@@ -149,7 +149,7 @@ int main(void) {
                 1.2f + 0.55f * 0.0f - 0.3f * 0.55f,
                 1.2f + 0.55f * (float)(n-1) + 0.3f * 0.55f
             };
-            plm_line_style ls = { PLM_RED, 1.8f, "linear fit", 0 };
+            plm_line_style ls = { PLM_RED, 1.8f, "linear fit", 0 , 0};
             plm_plot_add_line(p, fx, fy, 2, ls);
         }
     }
@@ -197,7 +197,7 @@ int main(void) {
                       + 0.4f * normal_pdf(dx[i], 6.5f, 1.1f);
                 dy[i] *= (float)nsamp * (9.0f / 35.0f); /* scale to match histogram */
             }
-            plm_line_style ls = { PLM_YELLOW, 2.0f, "true density", 0 };
+            plm_line_style ls = { PLM_YELLOW, 2.0f, "true density", 0 , 0};
             plm_plot_add_line(p, dx, dy, dn, ls);
         }
 
@@ -320,7 +320,7 @@ int main(void) {
         plm_plot_add_band(p, mon, t_min, t_max, 12, tbs);
 
         /* average temperature line */
-        plm_line_style tls = { PLM_RED, 2.5f, "T average", 0 };
+        plm_line_style tls = { PLM_RED, 2.5f, "T average", 0 , 0};
         plm_plot_add_line(p, mon, t_avg, 12, tls);
 
         /* rainfall as stems (maps to right axis) — simulate via bar */

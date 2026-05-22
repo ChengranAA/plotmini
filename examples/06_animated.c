@@ -31,9 +31,9 @@ int main(void) {
         x[i] = (float)i * 0.1f;
     }
 
-    plm_line_style style_blue = { PLM_BLUE,   1.5f, "sin(x + t)", 0};
-    plm_line_style style_red  = { PLM_RED,    1.0f, "cos(x + t)", 0};
-    plm_line_style style_grey = { PLM_GREY(180), 0.5f, NULL, 0};
+    plm_line_style style_blue = { PLM_BLUE,   1.5f, "sin(x + t)", 0, 0};
+    plm_line_style style_red  = { PLM_RED,    1.0f, "cos(x + t)", 0, 0};
+    plm_line_style style_grey = { PLM_GREY(180), 0.5f, NULL, 0, 0};
 
     float phase = 0.0f;
     int   frame = 0;

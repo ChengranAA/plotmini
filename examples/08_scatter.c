@@ -66,7 +66,7 @@ int main(void) {
             x[i] = (float)i * 0.1f;
             y[i] = sinf(x[i]) * 2.0f + 5.0f;
         }
-        plm_line_style ls = { PLM_GREY(80), 0.5f, "sin curve", 0};
+        plm_line_style ls = { PLM_GREY(80), 0.5f, "sin curve", 0, 0};
         plm_plot_add_line(&plot, x, y, n, ls);
         free(x); free(y);
     }

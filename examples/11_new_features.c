@@ -48,9 +48,9 @@ int main(void) {
             y[i] = 1.0f + (float)(i % 3) * 1.5f + 0.3f * (float)i;
         }
 
-        plm_line_style pre_s  = { PLM_BLUE,  2.0f, "step-pre",  PLM_STEP_PRE };
-        plm_line_style post_s = { PLM_RED,   2.0f, "step-post", PLM_STEP_POST };
-        plm_line_style mid_s  = { PLM_GREEN, 2.0f, "step-mid",  PLM_STEP_MID };
+        plm_line_style pre_s  = { PLM_BLUE,  2.0f, "step-pre",  PLM_STEP_PRE , 0};
+        plm_line_style post_s = { PLM_RED,   2.0f, "step-post", PLM_STEP_POST , 0};
+        plm_line_style mid_s  = { PLM_GREEN, 2.0f, "step-mid",  PLM_STEP_MID , 0};
 
         /* offset the post and mid data slightly for visual separation */
         float y_post[n], y_mid[n];
@@ -176,8 +176,8 @@ int main(void) {
                       2.0f * cosf(tx[i] * 0.3f);
         }
 
-        plm_line_style temp_s = { PLM_RED,    2.0f, "Temp (°C)", 0 };
-        plm_line_style pres_s = { PLM_BLUE,   1.5f, "Pres (kPa)", 0 };
+        plm_line_style temp_s = { PLM_RED,    2.0f, "Temp (°C)", 0 , 0};
+        plm_line_style pres_s = { PLM_BLUE,   1.5f, "Pres (kPa)", 0 , 0};
 
         plm_plot_add_line(p, tx, temp, n, temp_s);
         plm_plot_add_line(p, tx, pres, n, pres_s);

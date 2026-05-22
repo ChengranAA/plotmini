@@ -99,7 +99,7 @@ int main(void) {
         {
             float lx[] = { 0.0f, 10.0f };
             float ly[] = { 1.5f, 1.5f + 0.8f * 10.0f };
-            plm_line_style ls = { PLM_RED, 1.8f, "fit: y=0.8x+1.5", 0};
+            plm_line_style ls = { PLM_RED, 1.8f, "fit: y=0.8x+1.5", 0, 0};
             plm_plot_add_line(p, lx, ly, 2, ls);
         }
     }
@@ -142,7 +142,7 @@ int main(void) {
                 sx[i] = (float)i * 0.05f * (float)M_PI;
                 sy[i] = sinf(sx[i]);
             }
-            plm_line_style ls = { PLM_BLUE, 2.0f, "sin(x)", 0};
+            plm_line_style ls = { PLM_BLUE, 2.0f, "sin(x)", 0, 0};
             plm_plot_add_line(p, sx, sy, n, ls);
             free(sx); free(sy);
         }
