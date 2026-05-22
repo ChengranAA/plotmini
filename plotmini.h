@@ -1913,6 +1913,16 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
             if (need_right > p->margin_right)
                 p->margin_right = need_right;
         }
+        /* expand bottom margin for x-axis tick labels + label */
+        {
+            int x_th = plm__text_height_s(p->x_axis.font_scale > 0 ? p->x_axis.font_scale : S);
+            int label_h = PLM_FONT_H * S;
+            int need_bottom = tick_len + gap + x_th + gap;
+            if (p->x_label)
+                need_bottom += label_h + gap;
+            if (need_bottom > p->margin_bottom)
+                p->margin_bottom = need_bottom;
+        }
     }
 
     /* 2. compute plot area in pixels (inset from cell by margins) */
