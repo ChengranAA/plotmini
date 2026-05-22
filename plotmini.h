@@ -2112,6 +2112,97 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
+    /* 8. draw histogram series */
+    {
+        int si;
+        for (si = 0; si < p->hist_count; si++) {
+            const plm_hist_series *hs = &p->hists[si];
+            if (hs->count <= 0) continue;
+
+            int bins = hs->bins;
+            if (bins <= 0) {
+                double k = ceil(log2((double)hs->count) + 1.0);
+                bins = (int)(k < 4 ? 4 : (k > 100 ? 100 : k));
+            }
+
+            double dmin =  DBL_MAX, dmax = -DBL_MAX;
+            int j;
+            for (j = 0; j < hs->count; j++) {
+                double v = (double)hs->data[j];
+                if (!plm__isnan((float)v)) {
+                    if (v < dmin) dmin = v;
+                    if (v > dmax) dmax = v;
+                }
+            }
+            if (dmax <= dmin) continue;
+
+            double bin_w = (dmax - dmin) / (double)bins;
+            int *counts = (int *)calloc((size_t)bins, sizeof(int));
+            if (!counts) continue;
+
+            for (j = 0; j < hs->count; j++) {
+                double v = (double)hs->data[j];
+                if (plm__isnan((float)v)) continue;
+                int b = (int)((v - dmin) / bin_w);
+                if (b < 0) b = 0;
+                if (b >= bins) b = bins - 1;
+                counts[b]++;
+            }
+
+            int max_count = 0;
+            for (j = 0; j < bins; j++) {
+                if (counts[j] > max_count) max_count = counts[j];
+            }
+            if (max_count == 0) { free(counts); continue; }
+
+            float bar_area_left  = plm__map_x(p, dmin);
+            float bar_area_right = plm__map_x(p, dmax);
+            float bar_w = (bar_area_right - bar_area_left) / (float)bins;
+            if (bar_w < 1.0f) bar_w = 1.0f;
+
+            for (j = 0; j < bins; j++) {
+                double h = hs->density
+                    ? (double)counts[j] / ((double)hs->count * bin_w)
+                    : (double)counts[j];
+                float px_left  = bar_area_left + (float)j * bar_w;
+                float px_right = px_left + bar_w;
+                float baseline = plm__map_y(p, 0.0);
+                float bar_top  = plm__map_y(p, h);
+
+                if (px_right < (float)p->plot_area.x0 ||
+                    px_left  > (float)p->plot_area.x1) continue;
+
+                if (px_left  < (float)p->plot_area.x0) px_left  = (float)p->plot_area.x0;
+                if (px_right > (float)p->plot_area.x1) px_right = (float)p->plot_area.x1;
+
+                plm_irect r;
+                r.x0 = (int)px_left;
+                r.y0 = (int)(bar_top < baseline ? bar_top : baseline);
+                r.x1 = (int)(px_right + 0.5f);
+                r.y1 = (int)(bar_top < baseline ? baseline : bar_top);
+                if (r.x1 <= r.x0) r.x1 = r.x0 + 1;
+                if (r.y1 <= r.y0) r.y1 = r.y0 + 1;
+
+                plm_fb_fill_rect(fb, r, hs->style.fill_color);
+
+                if (hs->style.stroke_width > 0.0f) {
+                    plm_color sc = hs->style.stroke_color;
+                    int x;
+                    for (x = r.x0; x < r.x1; x++) {
+                        plm__set_pixel(fb, x, r.y0, sc);
+                        plm__set_pixel(fb, x, r.y1 - 1, sc);
+                    }
+                    int y;
+                    for (y = r.y0; y < r.y1; y++) {
+                        plm__set_pixel(fb, r.x0, y, sc);
+                        plm__set_pixel(fb, r.x1 - 1, y, sc);
+                    }
+                }
+            }
+            free(counts);
+        }
+    }
+
     /* 7. draw line series */
     {
         int si;
@@ -2206,97 +2297,6 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 prev_px = px; prev_py = py;
                 if (seg_start < 0) seg_start = i;
             }
-        }
-    }
-
-    /* 8. draw histogram series */
-    {
-        int si;
-        for (si = 0; si < p->hist_count; si++) {
-            const plm_hist_series *hs = &p->hists[si];
-            if (hs->count <= 0) continue;
-
-            int bins = hs->bins;
-            if (bins <= 0) {
-                double k = ceil(log2((double)hs->count) + 1.0);
-                bins = (int)(k < 4 ? 4 : (k > 100 ? 100 : k));
-            }
-
-            double dmin =  DBL_MAX, dmax = -DBL_MAX;
-            int j;
-            for (j = 0; j < hs->count; j++) {
-                double v = (double)hs->data[j];
-                if (!plm__isnan((float)v)) {
-                    if (v < dmin) dmin = v;
-                    if (v > dmax) dmax = v;
-                }
-            }
-            if (dmax <= dmin) continue;
-
-            double bin_w = (dmax - dmin) / (double)bins;
-            int *counts = (int *)calloc((size_t)bins, sizeof(int));
-            if (!counts) continue;
-
-            for (j = 0; j < hs->count; j++) {
-                double v = (double)hs->data[j];
-                if (plm__isnan((float)v)) continue;
-                int b = (int)((v - dmin) / bin_w);
-                if (b < 0) b = 0;
-                if (b >= bins) b = bins - 1;
-                counts[b]++;
-            }
-
-            int max_count = 0;
-            for (j = 0; j < bins; j++) {
-                if (counts[j] > max_count) max_count = counts[j];
-            }
-            if (max_count == 0) { free(counts); continue; }
-
-            float bar_area_left  = plm__map_x(p, dmin);
-            float bar_area_right = plm__map_x(p, dmax);
-            float bar_w = (bar_area_right - bar_area_left) / (float)bins;
-            if (bar_w < 1.0f) bar_w = 1.0f;
-
-            for (j = 0; j < bins; j++) {
-                double h = hs->density
-                    ? (double)counts[j] / ((double)hs->count * bin_w)
-                    : (double)counts[j];
-                float px_left  = bar_area_left + (float)j * bar_w;
-                float px_right = px_left + bar_w;
-                float baseline = plm__map_y(p, 0.0);
-                float bar_top  = plm__map_y(p, h);
-
-                if (px_right < (float)p->plot_area.x0 ||
-                    px_left  > (float)p->plot_area.x1) continue;
-
-                if (px_left  < (float)p->plot_area.x0) px_left  = (float)p->plot_area.x0;
-                if (px_right > (float)p->plot_area.x1) px_right = (float)p->plot_area.x1;
-
-                plm_irect r;
-                r.x0 = (int)px_left;
-                r.y0 = (int)(bar_top < baseline ? bar_top : baseline);
-                r.x1 = (int)(px_right + 0.5f);
-                r.y1 = (int)(bar_top < baseline ? baseline : bar_top);
-                if (r.x1 <= r.x0) r.x1 = r.x0 + 1;
-                if (r.y1 <= r.y0) r.y1 = r.y0 + 1;
-
-                plm_fb_fill_rect(fb, r, hs->style.fill_color);
-
-                if (hs->style.stroke_width > 0.0f) {
-                    plm_color sc = hs->style.stroke_color;
-                    int x;
-                    for (x = r.x0; x < r.x1; x++) {
-                        plm__set_pixel(fb, x, r.y0, sc);
-                        plm__set_pixel(fb, x, r.y1 - 1, sc);
-                    }
-                    int y;
-                    for (y = r.y0; y < r.y1; y++) {
-                        plm__set_pixel(fb, r.x0, y, sc);
-                        plm__set_pixel(fb, r.x1 - 1, y, sc);
-                    }
-                }
-            }
-            free(counts);
         }
     }
 
