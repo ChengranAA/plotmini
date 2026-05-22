@@ -1,3 +1,4 @@
+#define PLOTMINI_DARK_THEME
 #define PLOTMINI_IMPLEMENTATION
 #define PLOTMINI3D_IMPLEMENTATION
 #include "../../plotmini.h"
@@ -79,7 +80,7 @@ int main(void) {
             p->view.elevation =  25.0;
 
             plm3d_plot_add_surface(p, surf_x, surf_y, surf_z, nx, ny,
-                (plm3d_surface_style){PLM_GREY(150), 0.35f, cmaps[row], lights[col], NULL, 0});
+                (plm3d_surface_style){PLM_GREY(150), 0.35f, cmaps[row], lights[col], NULL, 0, 0, 0.0f, 0.0f});
         }
     }
 

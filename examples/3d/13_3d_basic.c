@@ -127,11 +127,11 @@ int main(void) {
 
         /* Surface with colormap + lighting */
         plm3d_plot_add_surface(&p, surf_x, surf_y, surf_z, nx, ny,
-            (plm3d_surface_style){PLM_GREY(180), 0.5f, PLM_CMAP_TURBO, light, NULL, 0});
+            (plm3d_surface_style){PLM_GREY(180), 0.5f, PLM_CMAP_TURBO, light, NULL, 0, 0, 0.0f, 0.0f});
 
         /* Spiral line */
         plm3d_plot_add_line(&p, lx, ly, lz, nline,
-            (plm3d_line_style){PLM_RED, 1.2f, NULL});
+            (plm3d_line_style){PLM_RED, 1.2f, NULL, PLM_CMAP_NONE});
 
         /* ---- Render ---- */
         plm3d_render(&p, &fb);

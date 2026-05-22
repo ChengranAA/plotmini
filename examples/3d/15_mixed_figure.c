@@ -1,4 +1,4 @@
-#define PLOTMINI_TEXT_SCALE 1
+#define PLOTMINI_DARK_THEME
 #define PLOTMINI_IMPLEMENTATION
 #define PLOTMINI3D_IMPLEMENTATION
 #include "../../plotmini.h"
@@ -115,7 +115,7 @@ int main(void) {
         p->margin_right  = 8;
         p->margin_bottom = 28;
 
-        plm3d_surface_style sstyle = {PLM_GREY(160), 0.35f, PLM_CMAP_TURBO, 0.85f, "sinc·gauss", 1};
+        plm3d_surface_style sstyle = {PLM_GREY(160), 0.35f, PLM_CMAP_TURBO, 0.85f, "sinc·gauss", 1, 0, 0.0f, 0.0f};
         plm3d_plot_add_surface(p, surf_x, surf_y, surf_z, nx, ny, sstyle);
     }
 
@@ -146,9 +146,9 @@ int main(void) {
         p->margin_bottom = 28;
 
         plm3d_plot_add_line(p, lx, ly, lz, nline,
-            (plm3d_line_style){PLM_RED, 1.2f, "spiral"});
+            (plm3d_line_style){PLM_RED, 1.2f, "spiral", PLM_CMAP_NONE});
         plm3d_plot_add_scatter(p, sx, sy, sz, nscat,
-            (plm3d_scatter_style){PLM_CYAN, 3.5f, "points"});
+            (plm3d_scatter_style){PLM_CYAN, 3.5f, "points", PLM_CMAP_NONE, NULL});
     }
 
     /* Bottom-right: 2D histogram */

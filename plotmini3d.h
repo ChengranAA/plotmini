@@ -63,6 +63,8 @@ typedef struct plm3d_scatter_style {
     plm_color   color;
     float       radius;      /* pixel radius                           */
     const char *legend;      /* optional legend label                  */
+    plm_cmap    cmap;        /* colormap by Z; PLM_CMAP_NONE = solid   */
+    const float *color_data; /* optional per-point cmap data; NULL=Z   */
 } plm3d_scatter_style;
 
 typedef struct plm3d_scatter_series {
@@ -78,6 +80,7 @@ typedef struct plm3d_line_style {
     plm_color   color;
     float       width;       /* pixel width (1.0 = hairline)           */
     const char *legend;      /* optional legend label                  */
+    plm_cmap    cmap;        /* colormap by Z; PLM_CMAP_NONE = solid   */
 } plm3d_line_style;
 
 typedef struct plm3d_line_series {
@@ -96,6 +99,9 @@ typedef struct plm3d_surface_style {
     float       light;       /* 0 = flat fill, 1 = full Lambertian lighting from camera direction */
     const char *legend;      /* optional legend label                  */
     int         cull_backfaces; /* 0 = show both sides, 1 = skip backfaces */
+    int         wireframe_only; /* 1 = skip fill, draw wireframe only  */
+    float       light_azimuth;  /* degrees, light horizontal angle; 0,0 = camera direction (default) */
+    float       light_elevation;/* degrees, light altitude above horizontal */
 } plm3d_surface_style;
 
 typedef struct plm3d_surface_series {
@@ -106,6 +112,54 @@ typedef struct plm3d_surface_series {
     int                   ny;
     plm3d_surface_style   style;
 } plm3d_surface_series;
+
+/* ---- 3D bar --------------------------------------------------------*/
+typedef struct plm3d_bar_style {
+    plm_color   fill_color;    /* bar fill color; if cmap != NONE, fill_color is ignored */
+    plm_color   stroke_color;  /* bar edge color                      */
+    float       stroke_width;  /* bar edge width in pixels             */
+    plm_cmap    cmap;          /* colormap by Z height; PLM_CMAP_NONE = use fill_color */
+    const char *legend;        /* optional legend label                */
+    float       baseline;      /* base Z for bars; NaN = auto (0 or z_min) */
+} plm3d_bar_style;
+
+typedef struct plm3d_bar_series {
+    const float      *x_data;      /* bar centre X positions, length count */
+    const float      *y_data;      /* bar centre Y positions, length count */
+    const float      *z_data;      /* bar heights, length count            */
+    int               count;
+    float             width_x;     /* bar half-width in X data units       */
+    float             width_y;     /* bar half-width in Y data units       */
+    plm3d_bar_style   style;
+} plm3d_bar_series;
+
+/* ---- 3D stem -------------------------------------------------------*/
+typedef struct plm3d_stem_style {
+    plm_color   line_color;    /* stem line color                      */
+    float       line_width;    /* stem line width in pixels            */
+    plm_color   marker_color;  /* marker color (PLM_RGBA(0,0,0,0) = no marker) */
+    float       marker_radius; /* marker radius in pixels              */
+    const char *legend;        /* optional legend label                */
+} plm3d_stem_style;
+
+typedef struct plm3d_stem_series {
+    const float       *x_data;
+    const float       *y_data;
+    const float       *z_data;
+    int                count;
+    float              baseline; /* Z value of stem base; NaN = z_min   */
+    plm3d_stem_style   style;
+} plm3d_stem_series;
+
+/* ---- 3D histogram (bivariate) --------------------------------------*/
+typedef struct plm3d_hist_series {
+    const float    *x_data;      /* X samples, length count             */
+    const float    *y_data;      /* Y samples, length count             */
+    int             count;        /* number of samples                  */
+    int             bins_x;       /* number of bins in X                */
+    int             bins_y;       /* number of bins in Y                */
+    plm3d_bar_style style;        /* bar style for rendering            */
+} plm3d_hist_series;
 
 /* ---- 3D plot -------------------------------------------------------*/
 typedef struct plm3d_plot {
@@ -145,6 +199,18 @@ typedef struct plm3d_plot {
     int                   surface_count;
     int                   surface_cap;
 
+    plm3d_bar_series     *bars;
+    int                   bar_count;
+    int                   bar_cap;
+
+    plm3d_stem_series    *stems;
+    int                   stem_count;
+    int                   stem_cap;
+
+    plm3d_hist_series    *hists;
+    int                   hist_count;
+    int                   hist_cap;
+
     /* internal state (read-only) */
     plm_irect    plot_area;   /* pixel rect of the 3D data region      */
     int          fb_w;        /* framebuffer width at last render       */
@@ -165,6 +231,18 @@ void plm3d_plot_add_line(plm3d_plot *p,
 void plm3d_plot_add_surface(plm3d_plot *p,
                             const float *x, const float *y, const float *z,
                             int nx, int ny, plm3d_surface_style style);
+void plm3d_plot_add_bar(plm3d_plot *p,
+                        const float *x, const float *y, const float *z,
+                        int count, float width_x, float width_y,
+                        plm3d_bar_style style);
+void plm3d_plot_add_stem(plm3d_plot *p,
+                         const float *x, const float *y, const float *z,
+                         int count, plm3d_stem_style style);
+void plm3d_plot_add_hist(plm3d_plot *p,
+                         const float *x, const float *y, int count,
+                         int bins_x, int bins_y, plm3d_bar_style style);
+void plm3d_colorbar(plm3d_plot *p, plm_fb *fb, plm_cmap cmap,
+                    double vmin, double vmax, const char *label);
 
 /* Render the 3D plot into a framebuffer.  The framebuffer must already
    be created with plm_fb_create().                                     */
@@ -470,7 +548,10 @@ static void plm3d__fill_quad_z(plm_fb *fb, float *zbuf,
 static int plm3d__axis_autorange(plm_axis *ax, int dim,
                                  plm3d_scatter_series *sc, int sc_n,
                                  plm3d_line_series    *li, int li_n,
-                                 plm3d_surface_series *su, int su_n) {
+                                 plm3d_surface_series *su, int su_n,
+                                 plm3d_bar_series     *ba, int ba_n,
+                                 plm3d_stem_series    *st, int st_n,
+                                 plm3d_hist_series    *hist, int hist_n) {
     double lo = 1e30, hi = -1e30;
     int    found = 0;
 
@@ -503,6 +584,70 @@ static int plm3d__axis_autorange(plm_axis *ax, int dim,
         if (dim == 0)       CHECK_DATASET(su[i].x_data, su[i].nx);
         else if (dim == 1)  CHECK_DATASET(su[i].y_data, su[i].ny);
         else                CHECK_DATASET(su[i].z_data, n);
+    }
+    /* bars */
+    for (int i = 0; i < ba_n; i++) {
+        if (dim == 0)       CHECK_DATASET(ba[i].x_data, ba[i].count);
+        else if (dim == 1)  CHECK_DATASET(ba[i].y_data, ba[i].count);
+        else {
+            /* For Z, include 0 (base plane) in range */
+            CHECK_DATASET(ba[i].z_data, ba[i].count);
+            if (0.0 < lo) lo = 0.0;
+            if (0.0 > hi) hi = 0.0;
+        }
+    }
+    /* stems */
+    for (int i = 0; i < st_n; i++) {
+        if (dim == 0)       CHECK_DATASET(st[i].x_data, st[i].count);
+        else if (dim == 1)  CHECK_DATASET(st[i].y_data, st[i].count);
+        else {
+            CHECK_DATASET(st[i].z_data, st[i].count);
+            /* include baseline */
+            float bl = plm__isnan(st[i].baseline) ? (float)lo : st[i].baseline;
+            if (bl < lo) lo = bl;
+            if (bl > hi) hi = bl;
+        }
+    }
+    /* hists: quick binning pass for Z range; raw data for X/Y axes */
+    if (dim == 2) {
+        for (int i = 0; i < hist_n; i++) {
+            if (hist[i].count < 1 || hist[i].bins_x < 1 || hist[i].bins_y < 1) continue;
+            double hx_min = 1e30, hx_max = -1e30, hy_min = 1e30, hy_max = -1e30;
+            for (int j = 0; j < hist[i].count; j++) {
+                float vx = hist[i].x_data[j], vy = hist[i].y_data[j];
+                if (plm__isnan(vx) || plm__isnan(vy)) continue;
+                if (vx < hx_min) hx_min = vx; if (vx > hx_max) hx_max = vx;
+                if (vy < hy_min) hy_min = vy; if (vy > hy_max) hy_max = vy;
+            }
+            if (hx_min >= hx_max || hy_min >= hy_max) continue;
+            double bw_x = (hx_max - hx_min) / hist[i].bins_x;
+            double bw_y = (hy_max - hy_min) / hist[i].bins_y;
+            if (bw_x <= 0.0 || bw_y <= 0.0) continue;
+            int nbins = hist[i].bins_x * hist[i].bins_y;
+            int *cnt = (int *)calloc((size_t)nbins, sizeof(int));
+            if (!cnt) continue;
+            for (int j = 0; j < hist[i].count; j++) {
+                float vx = hist[i].x_data[j], vy = hist[i].y_data[j];
+                if (plm__isnan(vx) || plm__isnan(vy)) continue;
+                int bx = (int)((vx - hx_min) / bw_x);
+                int by = (int)((vy - hy_min) / bw_y);
+                if (bx < 0) bx = 0; if (bx >= hist[i].bins_x) bx = hist[i].bins_x - 1;
+                if (by < 0) by = 0; if (by >= hist[i].bins_y) by = hist[i].bins_y - 1;
+                cnt[bx * hist[i].bins_y + by]++;
+            }
+            for (int j = 0; j < nbins; j++) {
+                if (cnt[j] < lo) lo = cnt[j];
+                if (cnt[j] > hi) hi = cnt[j];
+            }
+            free(cnt);
+            found = 1;
+            if (0.0 < lo) lo = 0.0;  /* include zero baseline */
+        }
+    } else {
+        for (int i = 0; i < hist_n; i++) {
+            if (dim == 0)       CHECK_DATASET(hist[i].x_data, hist[i].count);
+            else                CHECK_DATASET(hist[i].y_data, hist[i].count);
+        }
     }
 
     #undef CHECK_DATASET
@@ -644,6 +789,52 @@ static void plm3d__draw_axes(plm3d_plot *p, plm_fb *fb, float *zbuf,
             plm3d__line_z(fb, zbuf, tpx0, tpy0, trz0, tpx1, tpy1, trz0,
                           axis_colors[axis]);
         }
+
+        /* ---- grid lines (if axis.grid is set) ---- */
+        {
+            plm_axis *ax = (axis == 0) ? &p->x_axis :
+                           (axis == 1) ? &p->y_axis : &p->z_axis;
+            if (ax->grid) {
+                plm_color grid_c = PLM_GRID_COLOR;
+                float grid_lw = 0.6f;
+                for (double v = tick_start; v <= lo + range; v += step) {
+                    double gx0, gy0, gz0, gx1, gy1, gz1;
+                    if (axis == 0) {
+                        /* X-grid: line at constant X, varying Y, at Z=z_min */
+                        gx0 = gx1 = v;
+                        gy0 = p->y_axis.min; gy1 = p->y_axis.max;
+                        gz0 = gz1 = p->z_axis.min;
+                    } else if (axis == 1) {
+                        /* Y-grid: line at constant Y, varying X, at Z=z_min */
+                        gx0 = p->x_axis.min; gx1 = p->x_axis.max;
+                        gy0 = gy1 = v;
+                        gz0 = gz1 = p->z_axis.min;
+                    } else {
+                        /* Z-grid: line at constant Z, varying X, at Y=y_min */
+                        gx0 = p->x_axis.min; gx1 = p->x_axis.max;
+                        gy0 = gy1 = p->y_axis.min;
+                        gz0 = gz1 = v;
+                    }
+                    double gnx0 = (gx0 - p->x_axis.min) / x_range - 0.5;
+                    double gny0 = (gy0 - p->y_axis.min) / y_range - 0.5;
+                    double gnz0 = (gz0 - p->z_axis.min) / z_range - 0.5;
+                    double gnx1 = (gx1 - p->x_axis.min) / x_range - 0.5;
+                    double gny1 = (gy1 - p->y_axis.min) / y_range - 0.5;
+                    double gnz1 = (gz1 - p->z_axis.min) / z_range - 0.5;
+                    float grx0, gry0, grz0, grx1, gry1, grz1;
+                    plm3d__project(gnx0, gny0, gnz0, ca, sa, ce, se,
+                                   p->view.distance, &grx0, &gry0, &grz0);
+                    plm3d__project(gnx1, gny1, gnz1, ca, sa, ce, se,
+                                   p->view.distance, &grx1, &gry1, &grz1);
+                    float gpx0 = (float)(plot_cx + grx0 * scale);
+                    float gpy0 = (float)(plot_cy - gry0 * scale);
+                    float gpx1 = (float)(plot_cx + grx1 * scale);
+                    float gpy1 = (float)(plot_cy - gry1 * scale);
+                    plm3d__thick_line_z(fb, zbuf, gpx0, gpy0, grz0,
+                                        gpx1, gpy1, grz1, grid_lw, grid_c);
+                }
+            }
+        }
     }
 }
 
@@ -657,10 +848,31 @@ static void plm3d__render_scatters(plm3d_plot *p, plm_fb *fb, float *zbuf,
                                    double x_range, double y_range, double z_range) {
     for (int si = 0; si < p->scatter_count; si++) {
         plm3d_scatter_series *ss = &p->scatters[si];
+        int use_cmap = (ss->style.cmap != PLM_CMAP_NONE);
+        const float *cdata = ss->style.color_data ? ss->style.color_data : ss->z_data;
+
+        /* compute range of the colour-mapped variable */
+        double cmin = p->z_axis.min, crange = z_range;
+        if (use_cmap && ss->style.color_data) {
+            cmin = 1e30; double cmax = -1e30;
+            for (int i = 0; i < ss->count; i++) {
+                float v = cdata[i];
+                if (!plm__isnan(v)) {
+                    if (v < cmin) cmin = v;
+                    if (v > cmax) cmax = v;
+                }
+            }
+            if (cmin >= cmax) { cmin -= 0.5; cmax += 0.5; }
+            crange = cmax - cmin;
+            if (crange <= 0.0) crange = 1.0;
+        }
+
         for (int i = 0; i < ss->count; i++) {
             double nx = (ss->x_data[i] - p->x_axis.min) / x_range - 0.5;
             double ny = (ss->y_data[i] - p->y_axis.min) / y_range - 0.5;
             double nz = (ss->z_data[i] - p->z_axis.min) / z_range - 0.5;
+
+            if (plm__isnan(ss->x_data[i]) || plm__isnan(ss->y_data[i]) || plm__isnan(ss->z_data[i])) continue;
 
             float rx, ry, rz;
             plm3d__project(nx, ny, nz, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
@@ -668,8 +880,16 @@ static void plm3d__render_scatters(plm3d_plot *p, plm_fb *fb, float *zbuf,
             float px = (float)(plot_cx + rx * scale);
             float py = (float)(plot_cy - ry * scale);
 
+            plm_color sc = ss->style.color;
+            if (use_cmap) {
+                float cv = (!plm__isnan(cdata[i])) ? cdata[i] : (float)ss->z_data[i];
+                float t = (float)((cv - cmin) / crange);
+                if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+                sc = plm_cmap_lookup(t, ss->style.cmap);
+            }
+
             plm3d__fill_circle_z(fb, zbuf, px, py, rz,
-                                 ss->style.radius, ss->style.color);
+                                 ss->style.radius, sc);
         }
     }
 }
@@ -678,9 +898,11 @@ static void plm3d__render_lines(plm3d_plot *p, plm_fb *fb, float *zbuf,
                                 double ca, double sa, double ce, double se,
                                 double plot_cx, double plot_cy, double scale,
                                 double x_range, double y_range, double z_range) {
+    double z_data_min = p->z_axis.min;
     for (int si = 0; si < p->line_count; si++) {
         plm3d_line_series *ls = &p->lines[si];
         if (ls->count < 2) continue;
+        int use_cmap = (ls->style.cmap != PLM_CMAP_NONE);
 
         /* Project first point */
         double nx0 = (ls->x_data[0] - p->x_axis.min) / x_range - 0.5;
@@ -690,6 +912,7 @@ static void plm3d__render_lines(plm3d_plot *p, plm_fb *fb, float *zbuf,
         plm3d__project(nx0, ny0, nz0, ca, sa, ce, se, p->view.distance, &rx0, &ry0, &rz0);
         float px0 = (float)(plot_cx + rx0 * scale);
         float py0 = (float)(plot_cy - ry0 * scale);
+        float z0 = ls->z_data[0];
 
         for (int i = 1; i < ls->count; i++) {
             double nx1 = (ls->x_data[i] - p->x_axis.min) / x_range - 0.5;
@@ -699,15 +922,24 @@ static void plm3d__render_lines(plm3d_plot *p, plm_fb *fb, float *zbuf,
             plm3d__project(nx1, ny1, nz1, ca, sa, ce, se, p->view.distance, &rx1, &ry1, &rz1);
             float px1 = (float)(plot_cx + rx1 * scale);
             float py1 = (float)(plot_cy - ry1 * scale);
+            float z1 = ls->z_data[i];
+
+            plm_color lc = ls->style.color;
+            if (use_cmap) {
+                /* colour segment by midpoint Z */
+                float zmid = (z0 + z1) * 0.5f;
+                float t = (float)((zmid - z_data_min) / z_range);
+                if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+                lc = plm_cmap_lookup(t, ls->style.cmap);
+            }
 
             if (ls->style.width <= 1.0f)
-                plm3d__wu_line_z(fb, zbuf, px0, py0, rz0, px1, py1, rz1,
-                                 ls->style.color);
+                plm3d__wu_line_z(fb, zbuf, px0, py0, rz0, px1, py1, rz1, lc);
             else
                 plm3d__thick_line_z(fb, zbuf, px0, py0, rz0, px1, py1, rz1,
-                                    ls->style.width, ls->style.color);
+                                    ls->style.width, lc);
 
-            px0 = px1; py0 = py1; rz0 = rz1;
+            px0 = px1; py0 = py1; rz0 = rz1; z0 = z1;
         }
     }
 }
@@ -748,7 +980,7 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
         }
 
         /* ---- fill quads for proper occlusion (z-buffer) ---- */
-        {
+        if (!ss->style.wireframe_only) {
             int use_cmap = (ss->style.cmap != PLM_CMAP_NONE);
             float lighting = ss->style.light;
             plm_color solid_fill_c;
@@ -762,10 +994,22 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
             double z_data_min = p->z_axis.min;
             double z_data_range = z_range;
 
-            /* light direction = unit vector from scene toward camera */
-            float lx = (float)(sa * ce);
-            float ly = (float)(-ca * ce);
-            float lz = (float)se;
+            /* light direction: use custom azimuth/elevation if set, else camera direction */
+            float lx, ly, lz;
+            if (ss->style.light_azimuth != 0.0f || ss->style.light_elevation != 0.0f) {
+                double la = ss->style.light_azimuth * 3.141592653589793 / 180.0;
+                double le = ss->style.light_elevation * 3.141592653589793 / 180.0;
+                double lca = cos(la), lsa = sin(la);
+                double lce = cos(le), lse = sin(le);
+                lx = (float)(lsa * lce);
+                ly = (float)(-lca * lce);
+                lz = (float)lse;
+            } else {
+                /* Default: light from camera direction */
+                lx = (float)(sa * ce);
+                ly = (float)(-ca * ce);
+                lz = (float)se;
+            }
 
             for (int i = 0; i < nx - 1; i++) {
                 for (int j = 0; j < ny - 1; j++) {
@@ -885,6 +1129,291 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
 }
 
 /* ------------------------------------------------------------------ */
+/*  3D bar rendering                                                  */
+/* ------------------------------------------------------------------ */
+
+static void plm3d__render_bars(plm3d_plot *p, plm_fb *fb, float *zbuf,
+                               double ca, double sa, double ce, double se,
+                               double plot_cx, double plot_cy, double scale,
+                               double x_range, double y_range, double z_range) {
+    for (int si = 0; si < p->bar_count; si++) {
+        plm3d_bar_series *bs = &p->bars[si];
+        if (bs->count < 1) continue;
+
+        int use_cmap = (bs->style.cmap != PLM_CMAP_NONE);
+        double z_data_min = p->z_axis.min;
+        double z_data_range = z_range;
+
+        float hw_x = bs->width_x * 0.5f;
+        float hw_y = bs->width_y * 0.5f;
+        if (hw_x <= 0.0f || hw_y <= 0.0f) continue;
+
+        for (int i = 0; i < bs->count; i++) {
+            float bx = bs->x_data[i];
+            float by = bs->y_data[i];
+            float bz = bs->z_data[i];
+
+            /* skip NaN / inf data points */
+            if (plm__isnan(bx) || plm__isnan(by) || plm__isnan(bz)) continue;
+
+            /* bar footprint: (bx ± hw_x, by ± hw_y, base..top) */
+            float base_z, top_z;
+            if (!plm__isnan(bs->style.baseline)) {
+                /* custom baseline: bz is height offset from baseline */
+                base_z = bs->style.baseline;
+                top_z  = base_z + bz;
+            } else {
+                /* auto: bz is absolute top, base from z_min or 0 */
+                base_z = (float)p->z_axis.min;
+                if (base_z > 0.0f) base_z = 0.0f;
+                top_z  = bz;
+            }
+
+            /* 8 corners of the bar box in data space */
+            float cx[8] = { bx - hw_x, bx + hw_x, bx + hw_x, bx - hw_x,
+                            bx - hw_x, bx + hw_x, bx + hw_x, bx - hw_x };
+            float cy[8] = { by - hw_y, by - hw_y, by + hw_y, by + hw_y,
+                            by - hw_y, by - hw_y, by + hw_y, by + hw_y };
+            float cz[8] = { base_z, base_z, base_z, base_z,
+                            top_z, top_z, top_z, top_z };
+
+            /* project all 8 corners */
+            float psx[8], psy[8], psz[8];
+            for (int k = 0; k < 8; k++) {
+                double nxv = (cx[k] - p->x_axis.min) / x_range - 0.5;
+                double nyv = (cy[k] - p->y_axis.min) / y_range - 0.5;
+                double nzv = (cz[k] - p->z_axis.min) / z_range - 0.5;
+                float rx, ry, rz;
+                plm3d__project(nxv, nyv, nzv, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
+                psx[k] = (float)(plot_cx + rx * scale);
+                psy[k] = (float)(plot_cy - ry * scale);
+                psz[k] = rz;
+            }
+
+            /* bar color */
+            plm_color fill_c;
+            if (use_cmap) {
+                float t;
+                float ref_z = top_z;  /* colour by absolute top */
+                if (z_data_range > 0.0)
+                    t = (float)((ref_z - z_data_min) / z_data_range);
+                else
+                    t = 0.5f;
+                if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+                fill_c = plm_cmap_lookup(t, bs->style.cmap);
+            } else {
+                fill_c = bs->style.fill_color;
+            }
+
+            /* draw 5 visible faces (top + 4 sides) as quads.
+               Face order: top, front, right, back, left.
+               We skip the bottom face (it's usually invisible). */
+            /* top face: corners 4,5,6,7 */
+            { float qx[4] = { psx[4], psx[5], psx[6], psx[7] };
+              float qy[4] = { psy[4], psy[5], psy[6], psy[7] };
+              float qz[4] = { psz[4], psz[5], psz[6], psz[7] };
+              plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, fill_c); }
+
+            /* front face: corners 0,1,5,4 */
+            { float qx[4] = { psx[0], psx[1], psx[5], psx[4] };
+              float qy[4] = { psy[0], psy[1], psy[5], psy[4] };
+              float qz[4] = { psz[0], psz[1], psz[5], psz[4] };
+              /* slightly darker */
+              plm_color side_c = fill_c;
+              side_c.r = (unsigned char)(side_c.r * 0.85f);
+              side_c.g = (unsigned char)(side_c.g * 0.85f);
+              side_c.b = (unsigned char)(side_c.b * 0.85f);
+              plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, side_c); }
+
+            /* right face: corners 1,2,6,5 */
+            { float qx[4] = { psx[1], psx[2], psx[6], psx[5] };
+              float qy[4] = { psy[1], psy[2], psy[6], psy[5] };
+              float qz[4] = { psz[1], psz[2], psz[6], psz[5] };
+              plm_color side_c = fill_c;
+              side_c.r = (unsigned char)(side_c.r * 0.75f);
+              side_c.g = (unsigned char)(side_c.g * 0.75f);
+              side_c.b = (unsigned char)(side_c.b * 0.75f);
+              plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, side_c); }
+
+            /* back face: corners 2,3,7,6 */
+            { float qx[4] = { psx[2], psx[3], psx[7], psx[6] };
+              float qy[4] = { psy[2], psy[3], psy[7], psy[6] };
+              float qz[4] = { psz[2], psz[3], psz[7], psz[6] };
+              plm_color side_c = fill_c;
+              side_c.r = (unsigned char)(side_c.r * 0.85f);
+              side_c.g = (unsigned char)(side_c.g * 0.85f);
+              side_c.b = (unsigned char)(side_c.b * 0.85f);
+              plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, side_c); }
+
+            /* left face: corners 3,0,4,7 */
+            { float qx[4] = { psx[3], psx[0], psx[4], psx[7] };
+              float qy[4] = { psy[3], psy[0], psy[4], psy[7] };
+              float qz[4] = { psz[3], psz[0], psz[4], psz[7] };
+              plm_color side_c = fill_c;
+              side_c.r = (unsigned char)(side_c.r * 0.75f);
+              side_c.g = (unsigned char)(side_c.g * 0.75f);
+              side_c.b = (unsigned char)(side_c.b * 0.75f);
+              plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, side_c); }
+
+            /* stroke edges (wireframe outline of each bar) */
+            if (bs->style.stroke_width > 0.0f) {
+                plm_color sc = bs->style.stroke_color;
+                float sw = bs->style.stroke_width;
+                /* top face edges */
+                plm3d__thick_line_z(fb, zbuf, psx[4], psy[4], psz[4], psx[5], psy[5], psz[5], sw, sc);
+                plm3d__thick_line_z(fb, zbuf, psx[5], psy[5], psz[5], psx[6], psy[6], psz[6], sw, sc);
+                plm3d__thick_line_z(fb, zbuf, psx[6], psy[6], psz[6], psx[7], psy[7], psz[7], sw, sc);
+                plm3d__thick_line_z(fb, zbuf, psx[7], psy[7], psz[7], psx[4], psy[4], psz[4], sw, sc);
+                /* vertical edges */
+                plm3d__thick_line_z(fb, zbuf, psx[0], psy[0], psz[0], psx[4], psy[4], psz[4], sw, sc);
+                plm3d__thick_line_z(fb, zbuf, psx[1], psy[1], psz[1], psx[5], psy[5], psz[5], sw, sc);
+                plm3d__thick_line_z(fb, zbuf, psx[2], psy[2], psz[2], psx[6], psy[6], psz[6], sw, sc);
+                plm3d__thick_line_z(fb, zbuf, psx[3], psy[3], psz[3], psx[7], psy[7], psz[7], sw, sc);
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  3D stem rendering                                                 */
+/* ------------------------------------------------------------------ */
+
+static void plm3d__render_stems(plm3d_plot *p, plm_fb *fb, float *zbuf,
+                                double ca, double sa, double ce, double se,
+                                double plot_cx, double plot_cy, double scale,
+                                double x_range, double y_range, double z_range) {
+    for (int si = 0; si < p->stem_count; si++) {
+        plm3d_stem_series *ss = &p->stems[si];
+        float bl = plm__isnan(ss->baseline) ? (float)p->z_axis.min : ss->baseline;
+        int has_marker = (ss->style.marker_color.a != 0 && ss->style.marker_radius > 0.0f);
+
+        for (int i = 0; i < ss->count; i++) {
+            float sx = ss->x_data[i], sy = ss->y_data[i], sz = ss->z_data[i];
+            if (plm__isnan(sx) || plm__isnan(sy) || plm__isnan(sz)) continue;
+
+            /* normalise data-space coords */
+            double nx0 = (sx - p->x_axis.min) / x_range - 0.5;
+            double ny0 = (sy - p->y_axis.min) / y_range - 0.5;
+            double nz0 = (bl - p->z_axis.min) / z_range - 0.5;
+            double nx1 = (sx - p->x_axis.min) / x_range - 0.5;
+            double ny1 = (sy - p->y_axis.min) / y_range - 0.5;
+            double nz1 = (sz - p->z_axis.min) / z_range - 0.5;
+
+            float rx0, ry0, rz0, rx1, ry1, rz1;
+            plm3d__project(nx0, ny0, nz0, ca, sa, ce, se, p->view.distance, &rx0, &ry0, &rz0);
+            plm3d__project(nx1, ny1, nz1, ca, sa, ce, se, p->view.distance, &rx1, &ry1, &rz1);
+
+            float px0 = (float)(plot_cx + rx0 * scale);
+            float py0 = (float)(plot_cy - ry0 * scale);
+            float px1 = (float)(plot_cx + rx1 * scale);
+            float py1 = (float)(plot_cy - ry1 * scale);
+
+            /* stem line */
+            if (ss->style.line_width <= 1.0f)
+                plm3d__wu_line_z(fb, zbuf, px0, py0, rz0, px1, py1, rz1, ss->style.line_color);
+            else
+                plm3d__thick_line_z(fb, zbuf, px0, py0, rz0, px1, py1, rz1,
+                                    ss->style.line_width, ss->style.line_color);
+
+            /* marker at tip */
+            if (has_marker)
+                plm3d__fill_circle_z(fb, zbuf, px1, py1, rz1,
+                                     ss->style.marker_radius, ss->style.marker_color);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  3D histogram (bivariate) rendering                                */
+/* ------------------------------------------------------------------ */
+
+static void plm3d__render_hists(plm3d_plot *p, plm_fb *fb, float *zbuf,
+                                double ca, double sa, double ce, double se,
+                                double plot_cx, double plot_cy, double scale,
+                                double x_range, double y_range, double z_range) {
+    for (int si = 0; si < p->hist_count; si++) {
+        plm3d_hist_series *hs = &p->hists[si];
+        if (hs->count < 1 || hs->bins_x < 1 || hs->bins_y < 1) continue;
+
+        /* Find data ranges for binning */
+        double x_min = 1e30, x_max = -1e30;
+        double y_min = 1e30, y_max = -1e30;
+        for (int i = 0; i < hs->count; i++) {
+            float vx = hs->x_data[i], vy = hs->y_data[i];
+            if (plm__isnan(vx) || plm__isnan(vy)) continue;
+            if (vx < x_min) x_min = vx; if (vx > x_max) x_max = vx;
+            if (vy < y_min) y_min = vy; if (vy > y_max) y_max = vy;
+        }
+        if (x_min >= x_max) { x_min -= 0.5; x_max += 0.5; }
+        if (y_min >= y_max) { y_min -= 0.5; y_max += 0.5; }
+
+        double bin_wx = (x_max - x_min) / hs->bins_x;
+        double bin_wy = (y_max - y_min) / hs->bins_y;
+        if (bin_wx <= 0.0) bin_wx = 1.0;
+        if (bin_wy <= 0.0) bin_wy = 1.0;
+
+        /* Allocate and zero bin counts */
+        int nbins = hs->bins_x * hs->bins_y;
+        int *counts = (int *)calloc((size_t)nbins, sizeof(int));
+        if (!counts) continue;
+
+        /* Bin the data */
+        for (int i = 0; i < hs->count; i++) {
+            float vx = hs->x_data[i], vy = hs->y_data[i];
+            if (plm__isnan(vx) || plm__isnan(vy)) continue;
+            int bx = (int)((vx - x_min) / bin_wx);
+            int by = (int)((vy - y_min) / bin_wy);
+            if (bx < 0) bx = 0; if (bx >= hs->bins_x) bx = hs->bins_x - 1;
+            if (by < 0) by = 0; if (by >= hs->bins_y) by = hs->bins_y - 1;
+            counts[bx * hs->bins_y + by]++;
+        }
+
+        /* Build bar data from bins */
+        float *bx_arr = (float *)malloc((size_t)nbins * sizeof(float));
+        float *by_arr = (float *)malloc((size_t)nbins * sizeof(float));
+        float *bz_arr = (float *)malloc((size_t)nbins * sizeof(float));
+        if (!bx_arr || !by_arr || !bz_arr) {
+            free(counts); free(bx_arr); free(by_arr); free(bz_arr);
+            continue;
+        }
+        for (int ix = 0; ix < hs->bins_x; ix++) {
+            for (int iy = 0; iy < hs->bins_y; iy++) {
+                int idx = ix * hs->bins_y + iy;
+                bx_arr[idx] = (float)(x_min + (ix + 0.5) * bin_wx);
+                by_arr[idx] = (float)(y_min + (iy + 0.5) * bin_wy);
+                bz_arr[idx] = (float)counts[idx];
+            }
+        }
+        free(counts);
+
+        /* Render as bars (reuse bar infrastructure) */
+        plm3d_bar_series tmp_bars;
+        tmp_bars.x_data = bx_arr;
+        tmp_bars.y_data = by_arr;
+        tmp_bars.z_data = bz_arr;
+        tmp_bars.count  = nbins;
+        tmp_bars.width_x = (float)bin_wx * 0.45f;
+        tmp_bars.width_y = (float)bin_wy * 0.45f;
+        tmp_bars.style  = hs->style;
+
+        /* Temporarily add to plot's bar list and render */
+        plm3d_bar_series *saved_bars = p->bars;
+        int saved_count = p->bar_count;
+        p->bars = &tmp_bars;
+        p->bar_count = 1;
+
+        plm3d__render_bars(p, fb, zbuf, ca, sa, ce, se,
+                           plot_cx, plot_cy, scale,
+                           x_range, y_range, z_range);
+
+        p->bars = saved_bars;
+        p->bar_count = saved_count;
+
+        free(bx_arr); free(by_arr); free(bz_arr);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /*  render into a cell                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -898,17 +1427,26 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
         plm3d__axis_autorange(&p->x_axis, 0,
                               p->scatters, p->scatter_count,
                               p->lines,    p->line_count,
-                              p->surfaces, p->surface_count);
+                              p->surfaces, p->surface_count,
+                              p->bars,     p->bar_count,
+                              p->stems,    p->stem_count,
+                              p->hists,    p->hist_count);
     if (p->y_axis.min == p->y_axis.max)
         plm3d__axis_autorange(&p->y_axis, 1,
                               p->scatters, p->scatter_count,
                               p->lines,    p->line_count,
-                              p->surfaces, p->surface_count);
+                              p->surfaces, p->surface_count,
+                              p->bars,     p->bar_count,
+                              p->stems,    p->stem_count,
+                              p->hists,    p->hist_count);
     if (p->z_axis.min == p->z_axis.max)
         plm3d__axis_autorange(&p->z_axis, 2,
                               p->scatters, p->scatter_count,
                               p->lines,    p->line_count,
-                              p->surfaces, p->surface_count);
+                              p->surfaces, p->surface_count,
+                              p->bars,     p->bar_count,
+                              p->stems,    p->stem_count,
+                              p->hists,    p->hist_count);
 
     /* ---- 2. compute margins ---- */
     int ml = p->margin_left   >= 0 ? p->margin_left   : 40 * S;
@@ -1046,6 +1584,15 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
     plm3d__render_scatters(p, fb, zbuf, ca, sa, ce, se,
                            plot_cx, plot_cy, scale,
                            x_range, y_range, z_range);
+    plm3d__render_bars(p, fb, zbuf, ca, sa, ce, se,
+                       plot_cx, plot_cy, scale,
+                       x_range, y_range, z_range);
+    plm3d__render_hists(p, fb, zbuf, ca, sa, ce, se,
+                        plot_cx, plot_cy, scale,
+                        x_range, y_range, z_range);
+    plm3d__render_stems(p, fb, zbuf, ca, sa, ce, se,
+                        plot_cx, plot_cy, scale,
+                        x_range, y_range, z_range);
 
     /* ---- 10. draw axis labels and tick labels (no depth test) ---- */
     {
@@ -1192,7 +1739,9 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
         for (si = 0; si < p->line_count && entry_count < 64; si++) {
             if (p->lines[si].style.legend) {
                 entries[entry_count].label = p->lines[si].style.legend;
-                entries[entry_count].color = p->lines[si].style.color;
+                entries[entry_count].color = (p->lines[si].style.cmap != PLM_CMAP_NONE)
+                    ? plm_cmap_lookup(0.5f, p->lines[si].style.cmap)
+                    : p->lines[si].style.color;
                 entries[entry_count].is_line = 1;
                 entries[entry_count].is_marker = 0;
                 entries[entry_count].is_patch = 0;
@@ -1202,7 +1751,9 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
         for (si = 0; si < p->scatter_count && entry_count < 64; si++) {
             if (p->scatters[si].style.legend) {
                 entries[entry_count].label = p->scatters[si].style.legend;
-                entries[entry_count].color = p->scatters[si].style.color;
+                entries[entry_count].color = (p->scatters[si].style.cmap != PLM_CMAP_NONE)
+                    ? plm_cmap_lookup(0.5f, p->scatters[si].style.cmap)
+                    : p->scatters[si].style.color;
                 entries[entry_count].is_line = 0;
                 entries[entry_count].is_marker = 1;
                 entries[entry_count].is_patch = 0;
@@ -1213,6 +1764,40 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
             if (p->surfaces[si].style.legend) {
                 entries[entry_count].label = p->surfaces[si].style.legend;
                 entries[entry_count].color = p->surfaces[si].style.line_color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 0;
+                entries[entry_count].is_patch = 1;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->bar_count && entry_count < 64; si++) {
+            if (p->bars[si].style.legend) {
+                entries[entry_count].label = p->bars[si].style.legend;
+                entries[entry_count].color = (p->bars[si].style.cmap != PLM_CMAP_NONE)
+                    ? plm_cmap_lookup(0.5f, p->bars[si].style.cmap)
+                    : p->bars[si].style.fill_color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 0;
+                entries[entry_count].is_patch = 1;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->stem_count && entry_count < 64; si++) {
+            if (p->stems[si].style.legend) {
+                entries[entry_count].label = p->stems[si].style.legend;
+                entries[entry_count].color = p->stems[si].style.line_color;
+                entries[entry_count].is_line = 1;
+                entries[entry_count].is_marker = (p->stems[si].style.marker_color.a != 0);
+                entries[entry_count].is_patch = 0;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->hist_count && entry_count < 64; si++) {
+            if (p->hists[si].style.legend) {
+                entries[entry_count].label = p->hists[si].style.legend;
+                entries[entry_count].color = (p->hists[si].style.cmap != PLM_CMAP_NONE)
+                    ? plm_cmap_lookup(0.5f, p->hists[si].style.cmap)
+                    : p->hists[si].style.fill_color;
                 entries[entry_count].is_line = 0;
                 entries[entry_count].is_marker = 0;
                 entries[entry_count].is_patch = 1;
@@ -1308,6 +1893,12 @@ void plm3d_plot_reset(plm3d_plot *p) {
     p->line_count = 0; p->line_cap = 0;
     free(p->surfaces); p->surfaces = NULL;
     p->surface_count = 0; p->surface_cap = 0;
+    free(p->bars); p->bars = NULL;
+    p->bar_count = 0; p->bar_cap = 0;
+    free(p->stems); p->stems = NULL;
+    p->stem_count = 0; p->stem_cap = 0;
+    free(p->hists); p->hists = NULL;
+    p->hist_count = 0; p->hist_cap = 0;
 }
 
 void plm3d_plot_add_scatter(plm3d_plot *p,
@@ -1353,6 +1944,84 @@ void plm3d_plot_add_surface(plm3d_plot *p,
     ss->x_data = x; ss->y_data = y; ss->z_data = z;
     ss->nx = nx; ss->ny = ny;
     ss->style = style;
+}
+
+void plm3d_plot_add_bar(plm3d_plot *p,
+                        const float *x, const float *y, const float *z,
+                        int count, float width_x, float width_y,
+                        plm3d_bar_style style) {
+    if (p->bar_count >= p->bar_cap) {
+        int new_cap = p->bar_cap ? p->bar_cap * 2 : 8;
+        p->bars = (plm3d_bar_series *)realloc(
+            p->bars, (size_t)new_cap * sizeof(plm3d_bar_series));
+        p->bar_cap = new_cap;
+    }
+    plm3d_bar_series *bs = &p->bars[p->bar_count++];
+    bs->x_data = x; bs->y_data = y; bs->z_data = z;
+    bs->count  = count;
+    bs->width_x = width_x;
+    bs->width_y = width_y;
+    bs->style  = style;
+}
+
+void plm3d_plot_add_stem(plm3d_plot *p,
+                         const float *x, const float *y, const float *z,
+                         int count, plm3d_stem_style style) {
+    if (p->stem_count >= p->stem_cap) {
+        int new_cap = p->stem_cap ? p->stem_cap * 2 : 8;
+        p->stems = (plm3d_stem_series *)realloc(
+            p->stems, (size_t)new_cap * sizeof(plm3d_stem_series));
+        p->stem_cap = new_cap;
+    }
+    plm3d_stem_series *ss = &p->stems[p->stem_count++];
+    ss->x_data = x; ss->y_data = y; ss->z_data = z;
+    ss->count  = count;
+    ss->baseline = (float)NAN;  /* auto: use z_axis.min */
+    ss->style  = style;
+}
+
+void plm3d_plot_add_hist(plm3d_plot *p,
+                         const float *x, const float *y, int count,
+                         int bins_x, int bins_y, plm3d_bar_style style) {
+    if (p->hist_count >= p->hist_cap) {
+        int new_cap = p->hist_cap ? p->hist_cap * 2 : 4;
+        p->hists = (plm3d_hist_series *)realloc(
+            p->hists, (size_t)new_cap * sizeof(plm3d_hist_series));
+        p->hist_cap = new_cap;
+    }
+    plm3d_hist_series *hs = &p->hists[p->hist_count++];
+    hs->x_data = x; hs->y_data = y;
+    hs->count  = count;
+    hs->bins_x = bins_x;
+    hs->bins_y = bins_y;
+    hs->style  = style;
+}
+
+/* ------------------------------------------------------------------ */
+/*  colorbar for 3D plots                                             */
+/* ------------------------------------------------------------------ */
+
+void plm3d_colorbar(plm3d_plot *p, plm_fb *fb, plm_cmap cmap,
+                    double vmin, double vmax, const char *label) {
+    if (!p || !fb || cmap == PLM_CMAP_NONE) return;
+    /* Place colorbar in the right margin area */
+    const int S = PLOTMINI_TEXT_SCALE;
+    int pa_x1 = p->plot_area.x1;
+    int pa_y0 = p->plot_area.y0;
+    int pa_y1 = p->plot_area.y1;
+    int avail_w = fb->width - pa_x1;
+    if (avail_w < 30 * S) return;  /* not enough room */
+
+    int cbar_w = 14 * S;
+    int cbar_x = pa_x1 + 6 * S;
+    if (cbar_x + cbar_w > fb->width) cbar_x = fb->width - cbar_w - 2;
+    int cbar_y0 = pa_y0 + 4 * S;
+    int cbar_y1 = pa_y1 - 4 * S;
+    if (cbar_y1 <= cbar_y0) return;
+
+    plm_irect cbar_rect = { cbar_x, cbar_y0, cbar_x + cbar_w, cbar_y1 };
+    plm_colorbar(fb, cbar_rect, vmin, vmax, cmap, PLM_CBAR_VERTICAL,
+                 label, 0);
 }
 
 /* ------------------------------------------------------------------ */

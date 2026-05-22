@@ -1,12 +1,15 @@
 # plotmini
 
-Single-header C99 library for software-rendered plots. Zero dependencies beyond libc.
+Single-header C99 library for software-rendered 2D and 3D plots. Zero dependencies beyond libc.
 
 Output is a raw pixel framebuffer — attach any backend (minifb, SDL, file, …).
 
-<p align="center"><img src="examples/assets/showcase.png" width="700"></p>
+<p align="center">
+  <img src="examples/assets/showcase2d.png" width="400">
+  <img src="examples/assets/showcase3d.png" width="400">
+</p>
 
-## Quick Start
+## 2D
 
 ```c
 #define PLOTMINI_IMPLEMENTATION
@@ -27,38 +30,43 @@ plm_render(&p, &fb);
 plm_fb_save_bmp(&fb, "plot.bmp");
 ```
 
-## Features
+**Primitives**: line, scatter, bar, histogram, stem, step, error bar, band (fill between).  
+**Features**: Wu anti-aliasing, log/linear/categorical axes, subplot grids, dual Y-axis, legends, dark/light theme, `plm_imshow`, BMP export.
 
-- **Line**, scatter, bar, histogram, stem, step, error bar, band (fill between)
-- Wu anti-aliased lines, sub-pixel clipping, variable thickness
-- Log / linear / categorical axes, auto-range, nice-number ticks
-- Subplot grids with independent axes per cell
-- Dual Y-axis (left + right), per-axis font scale
-- Legends, custom tick formatters, asymmetric error bars
-- Dark / light theme, configurable margins, grid lines
-- `plm_imshow` — colormapped 2D arrays
-- `plm_fb_save_bmp` — write framebuffer to BMP file
-- RGBA8 or GRAY8 pixel formats
-
-## Subplots
+## 3D
 
 ```c
-plm_figure fig;
-plm_figure_init(&fig, 2, 2);
+#define PLOTMINI_IMPLEMENTATION
+#define PLOTMINI3D_IMPLEMENTATION
+#include "plotmini.h"
+#include "plotmini3d.h"
 
-plm_plot *p = plm_figure_plot(&fig, 0, 0);
-p->title = "sin(x)";
-plm_plot_add_line(p, x, y, n, (plm_line_style){PLM_BLUE, 1.5f, "sin", 0});
+unsigned char pixels[900 * 680 * 4];
+plm_fb fb = plm_fb_create(pixels, 900, 680, PLM_RGBA8);
 
-plm_figure_render(&fig, &fb);
-plm_figure_reset(&fig);
+plm3d_plot p;
+plm3d_plot_init(&p);
+p.title = "surface";
+p.view.azimuth = -50; p.view.elevation = 25;
+
+float *x = …, *y = …, *z = …;  /* z[i*ny + j] = f(x[i], y[j]) */
+plm3d_plot_add_surface(&p, x, y, z, nx, ny,
+    (plm3d_surface_style){PLM_GREY(180), 0.5f, PLM_CMAP_TURBO, 0.8f, NULL, 0,
+                          0, 0.0f, 0.0f});
+
+plm3d_render(&p, &fb);
+plm_fb_save_bmp(&fb, "plot3d.bmp");
 ```
 
-## Building Examples
+**Primitives**: surface (filled + wireframe), line, scatter, bar, stem, bivariate histogram.  
+**Features**: z-buffer, perspective/ortho, Lambertian lighting, backface culling, custom light direction, colormaps, floor grid, colorbar, legend. Mixed 2D/3D subplot figures via `plm_figure_plot_3d()`.
+
+## Building
 
 ```sh
-cd examples && make    # macOS + minifb
-./build/01_basic
+cd examples && make          # macOS + minifb
+./build/01_basic             # 2D line plot
+./build/20_showcase          # 3D dark-theme showcase
 ```
 
 ## Config

@@ -326,7 +326,7 @@ TEST(surface_render_smoke)
         p.view.azimuth   = -50.0;
         p.view.elevation =  30.0;
         plm3d_plot_add_surface(&p, x_data, y_data, z_data, 2, 2,
-            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.0f, NULL, 0});
+            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb1);
         plm3d_plot_reset(&p);
     }
@@ -338,7 +338,7 @@ TEST(surface_render_smoke)
         p.view.azimuth   = -50.0;
         p.view.elevation =  30.0;
         plm3d_plot_add_surface(&p, x_data, y_data, z_data, 2, 2,
-            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 1.0f, NULL, 0});
+            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 1.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb2);
         plm3d_plot_reset(&p);
     }
@@ -386,7 +386,7 @@ TEST(surface_lighting_changes_brightness)
         p.margin_right  = 10;
         p.margin_bottom = 30;
         plm3d_plot_add_surface(&p, x_data, y_data, z_data, n, n,
-            (plm3d_surface_style){PLM_RED, 0.4f, PLM_CMAP_NONE, 0.0f, NULL, 0});
+            (plm3d_surface_style){PLM_RED, 0.4f, PLM_CMAP_NONE, 0.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb_flat);
         plm3d_plot_reset(&p);
     }
@@ -402,7 +402,7 @@ TEST(surface_lighting_changes_brightness)
         p.margin_right  = 10;
         p.margin_bottom = 30;
         plm3d_plot_add_surface(&p, x_data, y_data, z_data, n, n,
-            (plm3d_surface_style){PLM_RED, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0});
+            (plm3d_surface_style){PLM_RED, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb_lit);
         plm3d_plot_reset(&p);
     }
@@ -437,7 +437,7 @@ TEST(surface_lighting_backward_compat)
         p.view.azimuth   = -50.0;
         p.view.elevation =  30.0;
         plm3d_plot_add_surface(&p, x_data, y_data, z_data, 2, 2,
-            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.0f, NULL, 0});
+            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb_a);
         plm3d_plot_reset(&p);
     }
@@ -489,9 +489,9 @@ TEST(surface_lighting_directional)
         p.view.azimuth   = -50.0;
         p.view.elevation =  30.0;
         plm3d_plot_add_surface(&p, x_flat, y_data, z_flat, 2, 2,
-            (plm3d_surface_style){PLM_WHITE, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0});
+            (plm3d_surface_style){PLM_WHITE, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_plot_add_surface(&p, x_tilt, y_data, z_tilt, 2, 2,
-            (plm3d_surface_style){PLM_WHITE, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0});
+            (plm3d_surface_style){PLM_WHITE, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb);
         plm3d_plot_reset(&p);
     }
@@ -537,7 +537,7 @@ TEST(surface_cmap_with_lighting)
     p.view.azimuth   = -50.0;
     p.view.elevation =  30.0;
     plm3d_plot_add_surface(&p, x_data, y_data, z_data, n, n,
-        (plm3d_surface_style){PLM_GREY(180), 0.4f, PLM_CMAP_VIRIDIS, 0.7f});
+        (plm3d_surface_style){PLM_GREY(180), 0.4f, PLM_CMAP_VIRIDIS, 0.7f, NULL, 0, 0, 0.0f, 0.0f});
     plm3d_render(&p, &fb);
     plm3d_plot_reset(&p);
 
@@ -564,7 +564,7 @@ TEST(surface_no_cmap_lighting_works)
     p.view.azimuth   = -50.0;
     p.view.elevation =  30.0;
     plm3d_plot_add_surface(&p, x_data, y_data, z_data, 2, 2,
-        (plm3d_surface_style){PLM_RED, 0.4f, PLM_CMAP_NONE, 1.0f});
+        (plm3d_surface_style){PLM_RED, 0.4f, PLM_CMAP_NONE, 1.0f, NULL, 0, 0, 0.0f, 0.0f});
     plm3d_render(&p, &fb);
     plm3d_plot_reset(&p);
 
@@ -587,7 +587,7 @@ TEST(autorange_from_surface)
     float z_data[6] = { -5.0f, 0.0f, 0.0f, 5.0f, 5.0f, 10.0f };
 
     plm3d_plot_add_surface(&p, x_data, y_data, z_data, 3, 2,
-        (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.0f});
+        (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.0f, NULL, 0, 0, 0.0f, 0.0f});
 
     /* Force autorange by setting min==max */
     p.x_axis.min = p.x_axis.max = 0.0;
@@ -642,7 +642,7 @@ TEST(view_different_angles)
         p.view.azimuth   = views[v][0];
         p.view.elevation = views[v][1];
         plm3d_plot_add_surface(&p, x_data, y_data, z_data, 2, 2,
-            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.5f});
+            (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS, 0.5f, NULL, 0, 0, 0.0f, 0.0f});
         plm3d_render(&p, &fb);
         plm3d_plot_reset(&p);
     }
