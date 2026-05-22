@@ -81,6 +81,17 @@ typedef struct plm_color {
 #define PLM_MAGENTA  PLM_RGBA(0xFF,0x00,0xFF,0xFF)
 #define PLM_GREY(x)  PLM_RGBA(x,x,x,0xFF)
 
+/* ---- theme colours (overridable via PLOTMINI_DARK_THEME) ---------- */
+#ifdef PLOTMINI_DARK_THEME
+  #define PLM_BG_COLOR    PLM_RGBA(0x1E,0x1E,0x1E,0xFF)  /* dark bg   */
+  #define PLM_FG_COLOR    PLM_RGBA(0xCC,0xCC,0xCC,0xFF)  /* light fg  */
+  #define PLM_GRID_COLOR  PLM_RGBA(0x3C,0x3C,0x3C,0xFF)  /* subtle grid */
+#else
+  #define PLM_BG_COLOR    PLM_WHITE
+  #define PLM_FG_COLOR    PLM_BLACK
+  #define PLM_GRID_COLOR  PLM_GREY(220)
+#endif
+
 /* ---- 2d point (data space) ---------------------------------------- */
 typedef struct plm_vec2 {
     double x, y;
@@ -799,6 +810,17 @@ static void plm__wu_line_thick(plm_fb *fb,
     }
 }
 /* ---- embedded bitmap font ------------------------------------------ */
+
+/* font metrics (always available, even with PLOTMINI_NO_FONT) */
+#define PLM_FONT_W  5
+#define PLM_FONT_H  7
+#define PLM_FONT_ADVANCE 6   /* width + 1 px spacing */
+
+/* override before #include to scale all text (default 1 = 5×7 px) */
+#ifndef PLOTMINI_TEXT_SCALE
+#define PLOTMINI_TEXT_SCALE 1
+#endif
+
 #ifndef PLOTMINI_NO_FONT
 
 /*
@@ -906,25 +928,22 @@ static const unsigned char plm__font_data[95 * 5] = {
     /* ~ */ 0x08,0x04,0x08,0x10,0x08,
 };
 
-#define PLM_FONT_W  5
-#define PLM_FONT_H  7
-#define PLM_FONT_ADVANCE 6   /* width + 1 px spacing */
-
 int plm_text_width(const char *s) {
     int w = 0;
     while (*s) {
         int ch = (unsigned char)*s;
-        if (ch >= 32 && ch < 127) w += PLM_FONT_ADVANCE;
+        if (ch >= 32 && ch < 127) w += PLM_FONT_ADVANCE * PLOTMINI_TEXT_SCALE;
         s++;
     }
     return w;
 }
 
 int plm_text_height(void) {
-    return PLM_FONT_H;
+    return PLM_FONT_H * PLOTMINI_TEXT_SCALE;
 }
 
 void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
+    const int S = PLOTMINI_TEXT_SCALE;
     while (*s) {
         int ch = (unsigned char)*s;
         if (ch >= 32 && ch < 127) {
@@ -935,14 +954,45 @@ void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
                 int row;
                 for (row = 0; row < PLM_FONT_H; row++) {
                     if (bits & (1u << row)) {
-                        plm__set_pixel(fb, x + col, y - PLM_FONT_H + 1 + row, c);
+                        int dx, dy;
+                        int px = x + col * S;
+                        int py = y - PLM_FONT_H * S + 1 + row * S;
+                        for (dy = 0; dy < S; dy++) {
+                            for (dx = 0; dx < S; dx++) {
+                                plm__set_pixel(fb, px + dx, py + dy, c);
+                            }
+                        }
                     }
                 }
             }
-            x += PLM_FONT_ADVANCE;
+            x += PLM_FONT_ADVANCE * S;
         }
         s++;
-        /* simple wrap?  Not for now -- caller controls placement. */
+    }
+}
+
+/* Draw a single character rotated 90° CW at (x,y) which is the
+   top-left corner of the rotated glyph (PLM_FONT_H × PLM_FONT_W). */
+static void plm__draw_char_rot90(plm_fb *fb, int x, int y, int ch,
+                                  plm_color c, int scale) {
+    if (ch < 32 || ch >= 127) return;
+    const unsigned char *glyph = plm__font_data + (ch - 32) * PLM_FONT_W;
+    int col, row;
+    for (col = 0; col < PLM_FONT_W; col++) {
+        unsigned char bits = glyph[col];
+        for (row = 0; row < PLM_FONT_H; row++) {
+            if (bits & (1u << row)) {
+                /* 90° CW: (col,row) → (PLM_FONT_H-1-row, col) */
+                int rx = (PLM_FONT_H - 1 - row) * scale;
+                int ry = col * scale;
+                int dx, dy;
+                for (dy = 0; dy < scale; dy++) {
+                    for (dx = 0; dx < scale; dx++) {
+                        plm__set_pixel(fb, x + rx + dx, y + ry + dy, c);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -952,6 +1002,10 @@ int  plm_text_width(const char *s)  { (void)s; return 0; }
 int  plm_text_height(void)          { return 0; }
 void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
     (void)fb; (void)x; (void)y; (void)s; (void)c;
+}
+static void plm__draw_char_rot90(plm_fb *fb, int x, int y, int ch,
+                                  plm_color c, int scale) {
+    (void)fb; (void)x; (void)y; (void)ch; (void)c; (void)scale;
 }
 
 #endif /* PLOTMINI_NO_FONT */
@@ -970,9 +1024,9 @@ void plm_plot_init(plm_plot *p) {
     p->y_axis.grid      = 1;
 
     p->margin_left      = 60;
-    p->margin_top       = 30;
+    p->margin_top       = 40;
     p->margin_right     = 20;
-    p->margin_bottom    = 40;
+    p->margin_bottom    = 45;
 
     p->title   = NULL;
     p->x_label = NULL;
@@ -1278,12 +1332,12 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         plm_irect bg;
         bg.x0 = p->plot_area.x0; bg.y0 = p->plot_area.y0;
         bg.x1 = p->plot_area.x1; bg.y1 = p->plot_area.y1;
-        plm_fb_fill_rect(fb, bg, PLM_WHITE);
+        plm_fb_fill_rect(fb, bg, PLM_BG_COLOR);
     }
 
     /* 4. draw grid lines (X axis - major) */
     if (p->x_axis.grid >= 1) {
-        plm_color grid_c = PLM_GREY(220);
+        plm_color grid_c = PLM_GRID_COLOR;
         if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 0) {
             /* grid at each category position */
             int ci;
@@ -1318,7 +1372,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
 
     /* 5. draw grid lines (Y axis - major) */
     if (p->y_axis.grid >= 1) {
-        plm_color grid_c = PLM_GREY(220);
+        plm_color grid_c = PLM_GRID_COLOR;
         if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
             int ci;
             for (ci = 0; ci < p->y_axis.num_categories; ci++) {
@@ -1352,7 +1406,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
 
     /* 6. draw axis spines (the L-shape) */
     {
-        plm_color ax_c = PLM_BLACK;
+        plm_color ax_c = PLM_FG_COLOR;
         /* bottom */
         { plm_irect r = { p->plot_area.x0, p->plot_area.y1 - 1,
                           p->plot_area.x1, p->plot_area.y1 };
@@ -1581,23 +1635,43 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
-    /* 10. draw title (centred within the cell) */
+    /* 10. draw title (centred in top margin) */
     if (p->title) {
         int tw = plm_text_width(p->title);
         int cx = cell_x0 + (cell_x1 - cell_x0) / 2;
-        plm_draw_text(fb, cx - tw / 2, cell_y0 + 20, p->title, PLM_BLACK);
+        int th = plm_text_height();
+        int ty = cell_y0 + (p->margin_top > 0 ? p->margin_top : 30) / 2 + th / 2;
+        plm_draw_text(fb, cx - tw / 2, ty, p->title, PLM_FG_COLOR);
     }
 
     /* 11. draw axis labels */
     if (p->x_label) {
         int tw = plm_text_width(p->x_label);
         int cx = p->plot_area.x0 + (p->plot_area.x1 - p->plot_area.x0) / 2;
-        plm_draw_text(fb, cx - tw / 2, cell_y1 - 5, p->x_label, PLM_BLACK);
+        int th = plm_text_height();
+        int ty = cell_y1 - (p->margin_bottom > 0 ? p->margin_bottom : 40) / 2 + th / 2;
+        plm_draw_text(fb, cx - tw / 2, ty, p->x_label, PLM_FG_COLOR);
     }
     if (p->y_label) {
-        /* horizontal text near the left edge of the cell */
-        int ty = p->plot_area.y0 + (p->plot_area.y1 - p->plot_area.y0) / 2;
-        plm_draw_text(fb, cell_x0 + 2, ty, p->y_label, PLM_BLACK);
+        /* Draw rotated 90° CW: each glyph is PLM_FONT_H×PLM_FONT_W,
+           stacked bottom-to-top so tilting head left reads correctly. */
+        const int S = PLOTMINI_TEXT_SCALE;
+        int char_w = PLM_FONT_H * S;   /* rotated width  */
+        int char_h = PLM_FONT_W * S;   /* rotated height */
+        int advance = PLM_FONT_ADVANCE * S;
+        int len = (int)strlen(p->y_label);
+        int total_h = len * advance;
+        int mid_y = p->plot_area.y0 + (p->plot_area.y1 - p->plot_area.y0) / 2;
+        int start_y = mid_y + total_h / 2;  /* top of text column */
+        int margin = p->margin_left > 0 ? p->margin_left : 60;
+        int cx = cell_x0 + margin / 2;
+        int i;
+        for (i = 0; p->y_label[i]; i++) {
+            int gx = cx - char_w / 2;
+            int gy = start_y - (len - 1 - i) * advance - char_h / 2;
+            plm__draw_char_rot90(fb, gx, gy,
+                (unsigned char)p->y_label[i], PLM_FG_COLOR, S);
+        }
     }
 
     /* 12. draw tick labels */
@@ -1615,11 +1689,11 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                     snprintf(buf, sizeof(buf), "%d", ci);
                     int tw = plm_text_width(buf);
                     plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
-                                  buf, PLM_BLACK);
+                                  buf, PLM_FG_COLOR);
                 } else {
                     int tw = plm_text_width(label);
                     plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
-                                  label, PLM_BLACK);
+                                  label, PLM_FG_COLOR);
                 }
             }
         }
@@ -1637,7 +1711,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 snprintf(buf, sizeof(buf), "%.4g", v);
                 int tw = plm_text_width(buf);
                 plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
-                              buf, PLM_BLACK);
+                              buf, PLM_FG_COLOR);
             }
         }
     }
@@ -1654,10 +1728,10 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                     char buf[32];
                     snprintf(buf, sizeof(buf), "%d", ci);
                     plm_draw_text(fb, p->plot_area.x0 - plm_text_width(buf) - 4,
-                                  iy + 3, buf, PLM_BLACK);
+                                  iy + 3, buf, PLM_FG_COLOR);
                 } else {
                     plm_draw_text(fb, p->plot_area.x0 - plm_text_width(label) - 4,
-                                  iy + 3, label, PLM_BLACK);
+                                  iy + 3, label, PLM_FG_COLOR);
                 }
             }
         }
@@ -1674,7 +1748,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%.4g", v);
                 plm_draw_text(fb, p->plot_area.x0 - plm_text_width(buf) - 4,
-                              iy + 3, buf, PLM_BLACK);
+                              iy + 3, buf, PLM_FG_COLOR);
             }
         }
     }
@@ -1685,7 +1759,7 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
     plm_plot *pp = (plm_plot *)p;  /* cast away const for autorange writes */
 
     /* clear the whole framebuffer once */
-    plm_fb_clear(fb, PLM_WHITE);
+    plm_fb_clear(fb, PLM_BG_COLOR);
 
     /* delegate to the cell-based renderer */
     plm__render_plot_into(pp, fb, 0, 0, fb->width, fb->height);
@@ -1729,7 +1803,7 @@ void plm_figure_render(const plm_figure *fig, plm_fb *fb) {
     if (!fig || !fig->plots || fig->nrows < 1 || fig->ncols < 1) return;
 
     /* 1. clear entire framebuffer once */
-    plm_fb_clear(fb, PLM_WHITE);
+    plm_fb_clear(fb, PLM_BG_COLOR);
 
     /* 2. compute figure content bounds (we use the full fb for simplicity) */
     fig_x0 = 0;
