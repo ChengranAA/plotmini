@@ -3,12 +3,17 @@
 *.so
 *.dylib
 
-examples/01_basic
-examples/02_histogram
-examples/03_styling
-examples/04_imshow
-examples/05_subplot
-examples/06_animated
-examples/07_fractal
-examples/08_scatter
+# example & test executables (anything without .c/.h extension)
+examples/*
+!examples/*.c
+!examples/*.h
+!examples/Makefile
 examples/dep
+
+test/test_*
+!test/*.c
+!test/*.h
+!test/Makefile
+
+# macOS
+.DS_Store
