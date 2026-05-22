@@ -96,14 +96,14 @@ int main(void) {
     }
 
     /* ---- Build mixed figure ---- */
-    plm3d_figure fig;
-    plm3d_figure_init(&fig, 2, 2);
+    plm_figure fig;
+    plm_figure_init(&fig, 2, 2);
     fig.title = "plotmini3d — Mixed 2D/3D Figure  |  "
                 "Perspective · Backface Culling · Legends  |  ESC to quit";
 
     /* Top-left: 3D surface with PERSPECTIVE, backface culling, legend */
     {
-        plm3d_plot *p = plm3d_figure_plot_3d(&fig, 0, 0);
+        plm3d_plot *p = (plm3d_plot *)plm_figure_plot_3d(&fig, 0, 0);
         p->title = "3D Surface — Perspective";
         p->view.azimuth   = -45.0;
         p->view.elevation = 28.0;
@@ -121,7 +121,7 @@ int main(void) {
 
     /* Top-right: 2D line plot with legend */
     {
-        plm_plot *p = plm3d_figure_plot_2d(&fig, 0, 1);
+        plm_plot *p = plm_figure_plot(&fig, 0, 1);
         p->title = "2D Lines — Legend";
         p->x_label = "x";
         p->y_label = "y";
@@ -135,7 +135,7 @@ int main(void) {
 
     /* Bottom-left: 3D scatter + line with legend */
     {
-        plm3d_plot *p = plm3d_figure_plot_3d(&fig, 1, 0);
+        plm3d_plot *p = (plm3d_plot *)plm_figure_plot_3d(&fig, 1, 0);
         p->title = "3D Scatter + Line — Legend";
         p->view.azimuth   = -55.0;
         p->view.elevation = 20.0;
@@ -153,7 +153,7 @@ int main(void) {
 
     /* Bottom-right: 2D histogram */
     {
-        plm_plot *p = plm3d_figure_plot_2d(&fig, 1, 1);
+        plm_plot *p = plm_figure_plot(&fig, 1, 1);
         p->title = "2D Histogram";
         p->x_label = "Value";
         p->y_label = "Count";
@@ -164,7 +164,7 @@ int main(void) {
     }
 
     /* ---- Render ---- */
-    plm3d_figure_render(&fig, &fb);
+    plm_figure_render(&fig, &fb);
     plm_fb_swizzle_rgba_bgra(&fb);
 
     while (1) {
@@ -183,6 +183,6 @@ int main(void) {
     free(samples);
     free(pixels);
 
-    plm3d_figure_reset(&fig);
+    plm_figure_reset(&fig);
     return 0;
 }

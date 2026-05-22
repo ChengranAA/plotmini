@@ -151,21 +151,7 @@ typedef struct plm3d_plot {
     int          fb_h;        /* framebuffer height at last render      */
 } plm3d_plot;
 
-/* ---- mixed 2D/3D subplot figure -----------------------------------*/
-typedef struct plm3d_figure {
-    int          nrows;
-    int          ncols;
-    int          hgap;        /* horizontal gap between cells (pixels)   */
-    int          vgap;        /* vertical   gap between cells (pixels)   */
-    const char  *title;       /* overall figure title, drawn at top     */
-    plm_plot    *plots;       /* array[nrows*ncols], 2D plots, owned    */
-    plm3d_plot  *plots3d;     /* array[nrows*ncols], 3D plots, owned    */
-    int         *cell_types;  /* 0 = 2D, 1 = 3D; NULL = all 2D         */
-} plm3d_figure;
 
-/* ================================================================== */
-/*  PUBLIC API  (declarations)                                        */
-/* ================================================================== */
 
 void plm3d_plot_init(plm3d_plot *p);
 void plm3d_plot_reset(plm3d_plot *p);
@@ -184,25 +170,8 @@ void plm3d_plot_add_surface(plm3d_plot *p,
    be created with plm_fb_create().                                     */
 void plm3d_render(plm3d_plot *p, plm_fb *fb);
 
-/* ---- mixed 2D/3D figure -------------------------------------------*/
-
-/* Initialise a figure with `nrows` x `ncols` grid.
-   Each cell starts as 2D; call plm3d_figure_plot_3d() to switch.      */
-void        plm3d_figure_init(plm3d_figure *fig, int nrows, int ncols);
-
-/* Return the 2D plot for cell (row, col).  Always available.           */
-plm_plot   *plm3d_figure_plot_2d(plm3d_figure *fig, int row, int col);
-
-/* Switch cell (row, col) to 3D mode and return its plm3d_plot.
-   Any 2D content in that cell is preserved but won't be rendered.      */
-plm3d_plot *plm3d_figure_plot_3d(plm3d_figure *fig, int row, int col);
-
-/* Render all subplots (2D and 3D) into one framebuffer.
-   Clears fb once, then renders each cell.  Margins stay within cells.  */
-void        plm3d_figure_render(const plm3d_figure *fig, plm_fb *fb);
-
-/* Free all internal storage; figure can be re-init'd or discarded.    */
-void        plm3d_figure_reset(plm3d_figure *fig);
+/* plm_figure_plot_3d() is declared in plotmini.h; its implementation
+   lives here so it can access the full plm3d_plot type.               */
 
 #ifdef __cplusplus
 }
@@ -954,8 +923,8 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
     {
         int th       = plm_text_height();
         int gap      = 4 * S;
-        int name_pad = 48 * S + th + gap;       /* axis-name outward  */
-        int tick_pad = 18 * S + 6 * S + th;     /* tick-label outward */
+        int name_pad = 36 * S + th + gap;       /* axis-name outward  */
+        int tick_pad = 14 * S + 4 * S + th;     /* tick-label outward */
         side_pad = name_pad > tick_pad ? name_pad : tick_pad;
 
         /* top: title-zone (above axis labels) + label protrusion     */
@@ -1044,8 +1013,8 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
     if (proj_h <= 0.0) proj_h = 1.0;
 
     /* Scale uniformly to fit, leaving some padding */
-    double scale_x = (pa_w * 0.85) / proj_w;
-    double scale_y = (pa_h * 0.85) / proj_h;
+    double scale_x = (pa_w * 0.92) / proj_w;
+    double scale_y = (pa_h * 0.92) / proj_h;
     double scale = (scale_x < scale_y) ? scale_x : scale_y;
 
     /* ---- 7. draw title (centered in the upper title-zone of the
@@ -1163,7 +1132,7 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
             if (step <= 0.0) step = 1.0;
 
             double tick_start = ceil(lo / step) * step;
-            double label_pad  = 18.0 * S;  /* pixel offset from tick tip */
+            double label_pad  = 14.0 * S;  /* pixel offset from tick tip */
             float tick_len_px = 6.0f;      /* matches plm3d__draw_axes  */
 
             for (double v = tick_start; v <= lo + range; v += step) {
@@ -1202,7 +1171,7 @@ static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
 
             /* ---- axis name label at endpoint (further out) ---- */
             {
-                float nm_off = 48.0f * S;
+                float nm_off = 36.0f * S;
                 float nlx = epx + ax_nx * nm_off;
                 float nly = epy + ax_ny * nm_off;
 
@@ -1387,112 +1356,53 @@ void plm3d_plot_add_surface(plm3d_plot *p,
 }
 
 /* ------------------------------------------------------------------ */
-/*  mixed 2D/3D figure                                                */
+/*  unified figure: plm_figure_plot_3d  (declared in plotmini.h)      */
 /* ------------------------------------------------------------------ */
 
-void plm3d_figure_init(plm3d_figure *fig, int nrows, int ncols) {
-    int i, total;
+/* thin wrapper so plm3d__render_plot_into can be called via the
+   plm_render_3d_fn callback from inside plm_figure_render()           */
+static void plm3d__render_cell_cb(void *p, plm_fb *fb,
+                                   int x0, int y0, int x1, int y1) {
+    plm3d__render_plot_into((plm3d_plot *)p, fb, x0, y0, x1, y1);
+}
+
+static void plm3d__reset_cell_cb(void *p) {
+    plm3d_plot_reset((plm3d_plot *)p);
+}
+
+void *plm_figure_plot_3d(plm_figure *fig, int row, int col) {
     const int S = PLOTMINI_TEXT_SCALE;
-    memset(fig, 0, sizeof(*fig));
-    fig->nrows = nrows < 1 ? 1 : nrows;
-    fig->ncols = ncols < 1 ? 1 : ncols;
-    fig->hgap  = 20 * S;
-    fig->vgap  = 20 * S;
+    int idx, total;
+    plm3d_plot *arr;
+
+    if (!fig || row < 0 || row >= fig->nrows || col < 0 || col >= fig->ncols)
+        return NULL;
+
+    idx   = row * fig->ncols + col;
     total = fig->nrows * fig->ncols;
-    fig->plots = (plm_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm_plot));
-    fig->plots3d = (plm3d_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm3d_plot));
-    fig->cell_types = (int *)PLOTMINI_MALLOC((size_t)total * sizeof(int));
-    for (i = 0; i < total; i++) {
-        plm_plot_init(&fig->plots[i]);
-        fig->plots[i].margin_left   = 55 * S;
-        fig->plots[i].margin_top    = 30 * S;
-        fig->plots[i].margin_right  = 20 * S;
-        fig->plots[i].margin_bottom = 38 * S;
-        plm3d_plot_init(&fig->plots3d[i]);
-        fig->plots3d[i].margin_left   = 40 * S;
-        fig->plots3d[i].margin_top    = 30 * S;
-        fig->plots3d[i].margin_right  = 20 * S;
-        fig->plots3d[i].margin_bottom = 40 * S;
-        fig->cell_types[i] = 0;  /* 2D by default */
-    }
-}
 
-plm_plot *plm3d_figure_plot_2d(plm3d_figure *fig, int row, int col) {
-    if (!fig || !fig->plots) return NULL;
-    if (row < 0 || row >= fig->nrows || col < 0 || col >= fig->ncols)
-        return NULL;
-    return &fig->plots[row * fig->ncols + col];
-}
-
-plm3d_plot *plm3d_figure_plot_3d(plm3d_figure *fig, int row, int col) {
-    if (!fig || !fig->plots3d) return NULL;
-    if (row < 0 || row >= fig->nrows || col < 0 || col >= fig->ncols)
-        return NULL;
-    int idx = row * fig->ncols + col;
-    fig->cell_types[idx] = 1;  /* mark as 3D */
-    return &fig->plots3d[idx];
-}
-
-void plm3d_figure_render(const plm3d_figure *fig, plm_fb *fb) {
-    int r, c, cell_w, cell_h;
-
-    if (!fig || !fig->plots || fig->nrows < 1 || fig->ncols < 1) return;
-
-    /* 1. clear entire framebuffer once */
-    plm_fb_clear(fb, PLM_BG_COLOR);
-
-    /* 1b. draw overall figure title (centered in top padding).
-          Expand top padding if needed to fit the title.            */
-    int pad_x = fig->hgap;
-    int pad_y = fig->vgap;
-    if (fig->title && fig->title[0]) {
-        int th = plm_text_height();
-        int min_pad = th + 8 * PLOTMINI_TEXT_SCALE;  /* title + breathing room */
-        if (pad_y < min_pad) pad_y = min_pad;
-        int tw = plm_text_width(fig->title);
-        int tx = (fb->width - tw) / 2;
-        int ty = pad_y / 2 + th / 2;
-        plm_draw_text(fb, tx, ty, fig->title, PLM_FG_COLOR);
-    }
-    cell_w = (fb->width  - 2 * pad_x - (fig->ncols - 1) * fig->hgap) / fig->ncols;
-    cell_h = (fb->height - 2 * pad_y - (fig->nrows - 1) * fig->vgap) / fig->nrows;
-    if (cell_w < 40) cell_w = 40;
-    if (cell_h < 40) cell_h = 40;
-
-    /* 3. render each cell */
-    for (r = 0; r < fig->nrows; r++) {
-        for (c = 0; c < fig->ncols; c++) {
-            int cell_x0 = pad_x + c * (cell_w + fig->hgap);
-            int cell_y0 = pad_y + r * (cell_h + fig->vgap);
-            int cell_x1 = cell_x0 + cell_w;
-            int cell_y1 = cell_y0 + cell_h;
-            int idx = r * fig->ncols + c;
-
-            if (fig->cell_types && fig->cell_types[idx] == 1) {
-                /* 3D cell */
-                plm3d_plot *p3 = (plm3d_plot *)&fig->plots3d[idx];
-                plm3d__render_plot_into(p3, fb, cell_x0, cell_y0, cell_x1, cell_y1);
-            } else {
-                /* 2D cell */
-                plm_plot *p2 = (plm_plot *)&fig->plots[idx];
-                plm__render_plot_into(p2, fb, cell_x0, cell_y0, cell_x1, cell_y1);
-            }
+    /* lazy-allocate 3D storage on first call */
+    if (!fig->plots3d) {
+        fig->plots3d_stride = (int)sizeof(plm3d_plot);
+        arr = (plm3d_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm3d_plot));
+        fig->plots3d   = arr;
+        fig->cell_types = (int *)PLOTMINI_MALLOC((size_t)total * sizeof(int));
+        for (int i = 0; i < total; i++) {
+            plm3d_plot_init(&arr[i]);
+            arr[i].margin_left   = 40 * S;
+            arr[i].margin_top    = 30 * S;
+            arr[i].margin_right  = 20 * S;
+            arr[i].margin_bottom = 40 * S;
+            fig->cell_types[i] = 0;
         }
+        /* wire up the callbacks so plm_figure_render / _reset work */
+        fig->render_3d = plm3d__render_cell_cb;
+        fig->reset_3d  = plm3d__reset_cell_cb;
     }
-}
 
-void plm3d_figure_reset(plm3d_figure *fig) {
-    int i, total;
-    if (!fig || !fig->plots) return;
-    total = fig->nrows * fig->ncols;
-    for (i = 0; i < total; i++) {
-        plm_plot_reset(&fig->plots[i]);
-        plm3d_plot_reset(&fig->plots3d[i]);
-    }
-    PLOTMINI_FREE(fig->plots);
-    PLOTMINI_FREE(fig->plots3d);
-    PLOTMINI_FREE(fig->cell_types);
-    memset(fig, 0, sizeof(*fig));
+    arr = (plm3d_plot *)fig->plots3d;
+    fig->cell_types[idx] = 1;  /* mark as 3D */
+    return &arr[idx];
 }
 
 #endif /* PLOTMINI3D_IMPLEMENTATION */

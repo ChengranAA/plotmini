@@ -83,18 +83,17 @@ int main(void) {
 
         if (keys[MFB_KB_KEY_R]) { azimuth = -50.0; elevation = 25.0; changed = 1; }
 
-        if (keys[MFB_KB_KEY_L]) {
-            /* Toggle lighting on key-down edge (simple polling toggle) */
+        {
             static int l_was_down = 0;
-            if (!l_was_down) {
-                light = (light > 0.5f) ? 0.0f : 0.8f;
-                changed = 1;
+            if (keys[MFB_KB_KEY_L]) {
+                if (!l_was_down) {
+                    light = (light > 0.5f) ? 0.0f : 0.8f;
+                    changed = 1;
+                }
+                l_was_down = 1;
+            } else {
+                l_was_down = 0;
             }
-            l_was_down = 1;
-        } else {
-            static int l_was_down = 0;
-            l_was_down = 0;
-            (void)l_was_down;
         }
 
         /* Clamp elevation */

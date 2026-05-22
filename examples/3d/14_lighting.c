@@ -22,9 +22,9 @@ int main(void) {
     int cols = 3;   /* light = 0.0, 0.5, 1.0 */
     int rows = 2;   /* viridis, turbo           */
 
-    /* Window size: let the figure divide the space */
-    int win_w = 1020;
-    int win_h = 560;
+    /* Window size */
+    int win_w = 960;
+    int win_h = 500;
 
     struct mfb_window *win = mfb_open("plotmini3d — surface lighting comparison", win_w, win_h);
     if (!win) {
@@ -36,10 +36,8 @@ int main(void) {
     plm_fb fb = plm_fb_create(pixels, win_w, win_h, PLM_RGBA8);
 
     /* ---- Build the surface data once ---- */
-    plm_cmap cmaps[2]         = { PLM_CMAP_VIRIDIS, PLM_CMAP_TURBO };
-    const char *cmap_names[2]   = { "Viridis", "Turbo" };
-    float lights[3]             = { 0.0f, 0.5f, 1.0f };
-    const char *light_labels[3] = { "Flat  (light = 0.0)", "Half  (light = 0.5)", "Full  (light = 1.0)" };
+    plm_cmap cmaps[2] = { PLM_CMAP_VIRIDIS, PLM_CMAP_TURBO };
+    float lights[3]    = { 0.0f, 0.5f, 1.0f };
 
     int nx = 40, ny = 40;
     float *surf_x = (float *)malloc((size_t)nx * sizeof(float));
@@ -60,19 +58,23 @@ int main(void) {
         }
     }
 
-    /* ---- Build figure with plm3d_figure ---- */
-    plm3d_figure fig;
-    plm3d_figure_init(&fig, rows, cols);
-    fig.title = "Surface Lighting Comparison  —  Viridis vs Turbo  ×  Flat / Half / Full";
+    /* ---- Build figure with plm_figure ---- */
+    plm_figure fig;
+    plm_figure_init(&fig, rows, cols);
+    fig.title = "Surface Lighting  —  Viridis vs Turbo";
+    fig.hgap = 12;
+    fig.vgap = 12;
+
+    const char *cell_titles[2][3] = {
+        {"Viridis light=0.0", "Viridis light=0.5", "Viridis light=1.0"},
+        {  "Turbo light=0.0",   "Turbo light=0.5",   "Turbo light=1.0"}
+    };
 
     for (int row = 0; row < rows; row++) {
         for (int col = 0; col < cols; col++) {
-            plm3d_plot *p = plm3d_figure_plot_3d(&fig, row, col);
+            plm3d_plot *p = (plm3d_plot *)plm_figure_plot_3d(&fig, row, col);
 
-            char title[64];
-            snprintf(title, sizeof(title), "%s  |  %s",
-                     cmap_names[row], light_labels[col]);
-            p->title         = title;
+            p->title         = cell_titles[row][col];
             p->view.azimuth   = -50.0;
             p->view.elevation =  25.0;
 
@@ -82,7 +84,7 @@ int main(void) {
     }
 
     /* ---- Render ---- */
-    plm3d_figure_render(&fig, &fb);
+    plm_figure_render(&fig, &fb);
     plm_fb_swizzle_rgba_bgra(&fb);
 
     /* ---- Display ---- */
@@ -97,6 +99,6 @@ int main(void) {
 
     free(surf_x); free(surf_y); free(surf_z);
     free(pixels);
-    plm3d_figure_reset(&fig);
+    plm_figure_reset(&fig);
     return 0;
 }
