@@ -20,9 +20,9 @@ int main(void) {
     unsigned char *img = stbi_load("../assets/cat.jpeg", &img_w, &img_h, &ch, 1);
     if (!img) { fprintf(stderr, "failed to load image\n"); return 1; }
 
-    /* Reserve bottom 150 px for the coolwarm horizontal demo */
-    const int win_w = 1400, win_h = 950;
-    const int coolwarm_h = 150;
+    /* Reserve bottom 110 px for the coolwarm horizontal demo */
+    const int win_w = 1060, win_h = 720;
+    const int coolwarm_h = 110;
 
     struct mfb_window *win = mfb_open(
         "plotmini — colormaps + colorbar showcase", win_w, win_h);
@@ -38,7 +38,7 @@ int main(void) {
     stbi_image_free(img);
 
     /* ================================================================ */
-    /* 3×3 grid: 9 colormaps with vertical colorbars                    */
+    /* 3x3 grid: 9 colormaps with vertical colorbars                    */
     /* ================================================================ */
     {
         plm_cmap cmaps[] = {
@@ -53,10 +53,10 @@ int main(void) {
         };
 
         const int cols = 3, rows = 3;
-        const int gap = 20;
-        const int top_margin  = 100;
-        const int left_margin = 20;
-        const int right_margin = 80;  /* space for vertical colorbar label */
+        const int gap = 16;
+        const int top_margin  = 80;
+        const int left_margin = 16;
+        const int right_margin = 70;
 
         /* grid fits in the space above the coolwarm demo */
         int grid_h = win_h - coolwarm_h - top_margin;
@@ -70,11 +70,11 @@ int main(void) {
                 int cx0 = left_margin + c * (cell_w + gap);
                 int cy0 = top_margin  + r * (cell_h + gap);
 
-                /* leave room for colorbar + its label on the right */
-                int cbar_width = 28;
-                int cbar_gap   = 12;
-                int img_avail_w = cell_w - cbar_width - cbar_gap - 10;
-                int img_avail_h = cell_h - 22;  /* room for title below */
+                /* leave room for colorbar + name below */
+                int cbar_width = 22;
+                int cbar_gap   = 10;
+                int img_avail_w = cell_w - cbar_width - cbar_gap - 8;
+                int img_avail_h = cell_h - 18;
                 if (img_avail_w < 40) img_avail_w = 40;
                 if (img_avail_h < 40) img_avail_h = 40;
 
@@ -85,30 +85,30 @@ int main(void) {
                 plm_imshow(&fb, img_rect, fimg, img_w, img_h,
                            0.0, 255.0, cmaps[idx]);
 
-                /* vertical colorbar alongside the image */
+                /* vertical colorbar alongside */
                 int cbar_x0 = img_rect.x1 + cbar_gap;
                 plm_irect cbar_rect = { cbar_x0, img_rect.y0,
                                         cbar_x0 + cbar_width, img_rect.y1 };
                 plm_colorbar(&fb, cbar_rect, 0.0, 255.0, cmaps[idx],
-                             PLM_CBAR_VERTICAL, NULL, 4);
+                             PLM_CBAR_VERTICAL, NULL, 3);
 
                 /* name below */
                 int tw = plm_text_width(names[idx]);
                 int tx = cx0 + (cell_w - tw) / 2;
-                int ty = cy0 + img_avail_h + 4;
+                int ty = cy0 + img_avail_h + 2;
                 plm_draw_text(&fb, tx, ty + plm_text_height(), names[idx], PLM_FG_COLOR);
             }
         }
 
-        /* title + subtitle */
+        /* title */
         {
             const char *title = "Colormap Gallery  (all 9 maps with colorbars)";
             int tw = plm_text_width(title);
-            plm_draw_text(&fb, (win_w - tw) / 2, 30, title, PLM_FG_COLOR);
+            plm_draw_text(&fb, (win_w - tw) / 2, 24, title, PLM_FG_COLOR);
 
             const char *sub = "Grayscale image mapped through each colormap";
             tw = plm_text_width(sub);
-            plm_draw_text(&fb, (win_w - tw) / 2, 50, sub, PLM_GREY(140));
+            plm_draw_text(&fb, (win_w - tw) / 2, 42, sub, PLM_GREY(140));
         }
     }
 
@@ -116,18 +116,17 @@ int main(void) {
     /* Bottom: coolwarm diverging colormap + horizontal colorbar        */
     /* ================================================================ */
     {
-        const int demo_y0 = win_h - coolwarm_h + 20;
+        const int demo_y0 = win_h - coolwarm_h + 16;
         const int demo_x0 = 40;
         const int demo_w = win_w - 80;
 
-        /* synthetic sine wave stretched to a horizontal band */
         const int n = 400;
         float *wave = (float *)malloc((size_t)n * sizeof(float));
         int i;
         for (i = 0; i < n; i++)
             wave[i] = sinf((float)i / (float)(n - 1) * 4.0f * (float)M_PI);
 
-        int band_h = 36;
+        int band_h = 30;
         plm_irect band_rect = { demo_x0, demo_y0, demo_x0 + demo_w, demo_y0 + band_h };
 
         float *band2d = (float *)malloc((size_t)n * (size_t)band_h * sizeof(float));
@@ -140,18 +139,18 @@ int main(void) {
                    -1.0, 1.0, PLM_CMAP_COOLWARM);
         free(band2d);
 
-        /* horizontal colorbar below the band */
+        /* horizontal colorbar below */
         {
-            plm_irect hcbar = { demo_x0, demo_y0 + band_h + 12,
-                                demo_x0 + demo_w, demo_y0 + band_h + 12 + 50 };
+            plm_irect hcbar = { demo_x0, demo_y0 + band_h + 8,
+                                demo_x0 + demo_w, demo_y0 + band_h + 8 + 42 };
             plm_colorbar(&fb, hcbar, -1.0, 1.0, PLM_CMAP_COOLWARM,
                          PLM_CBAR_HORIZONTAL, "correlation  (coolwarm)", 5);
         }
 
         /* label above */
         {
-            const char *lbl = "Diverging colormap: coolwarm  —  blue-white-red, zero-centered";
-            plm_draw_text(&fb, demo_x0, demo_y0 - 10, lbl, PLM_FG_COLOR);
+            const char *lbl = "Diverging colormap: coolwarm  --  blue-white-red, zero-centered";
+            plm_draw_text(&fb, demo_x0, demo_y0 - 8, lbl, PLM_FG_COLOR);
         }
         free(wave);
     }
