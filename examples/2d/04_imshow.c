@@ -1,11 +1,11 @@
 #define PLOTMINI_TEXT_SCALE 2
 #define PLOTMINI_DARK_THEME
 #define PLOTMINI_IMPLEMENTATION
-#include "../plotmini.h"
-#include "dep/MiniFB.h"
+#include "../../plotmini.h"
+#include "../dep/MiniFB.h"
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "dep/stb_image.h"
+#include "../dep/stb_image.h"
 
 #include <stdio.h>
 #include <stdlib.h>

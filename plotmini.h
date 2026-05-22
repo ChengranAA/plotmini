@@ -329,15 +329,28 @@ typedef struct plm_plot {
     int          fb_h;        /* framebuffer height at last render      */
 } plm_plot;
 
-/* A grid of subplots.  Each cell holds an independent plm_plot.
-   Create with plm_figure_init(), fill each cell via plm_figure_plot(),
-   then render everything with plm_figure_render().                      */
+/* Opaque 3D-plot handle.  plotmini3d.h fills in the stride and
+   callbacks so plm_figure can dispatch without knowing the full type.  */
+typedef void (*plm_render_3d_fn)(void *p, plm_fb *fb,
+                                  int x0, int y0, int x1, int y1);
+typedef void (*plm_reset_3d_fn)(void *p);
+
+/* A grid of subplots.  Each cell holds an independent plm_plot
+   (2D) or, when plotmini3d.h is included, a plm3d_plot (3D).
+   Create with plm_figure_init(), fill each cell via plm_figure_plot()
+   or plm_figure_plot_3d(), then render with plm_figure_render().       */
 typedef struct plm_figure {
     int          nrows;
     int          ncols;
     int          hgap;        /* horizontal gap between cells (pixels)   */
     int          vgap;        /* vertical   gap between cells (pixels)   */
-    plm_plot    *plots;       /* array[nrows * ncols], owned by figure   */
+    const char  *title;       /* overall figure title, drawn at top     */
+    plm_plot    *plots;       /* array[nrows*ncols], 2D plots, owned    */
+    void        *plots3d;     /* array[nrows*ncols], 3D plots (NULL=off)*/
+    int          plots3d_stride; /* sizeof(plm3d_plot), set by 3D module */
+    int         *cell_types;  /* 0 = 2D, 1 = 3D; NULL = all 2D         */
+    plm_render_3d_fn render_3d; /* callback set by plotmini3d.h         */
+    plm_reset_3d_fn  reset_3d;  /* callback set by plotmini3d.h         */
 } plm_figure;
 
 /* ------------------------------------------------------------------ */
@@ -366,6 +379,7 @@ void   plm_fb_swizzle_rgba_bgra(plm_fb *fb);
 /* ---- colormap ----------------------------------------------------- */
 
 typedef enum plm_cmap {
+    PLM_CMAP_NONE = 0,
     PLM_CMAP_HEAT,
     PLM_CMAP_VIRIDIS,
     PLM_CMAP_GRAY,
@@ -377,6 +391,8 @@ typedef enum plm_cmap {
     PLM_CMAP_COOLWARM,
     PLM_CMAP_JET
 } plm_cmap;
+
+plm_color plm_cmap_lookup(float t, plm_cmap cmap);
 
 void   plm_imshow(plm_fb *fb, plm_irect rect,
                   const float *data, int data_w, int data_h,
@@ -507,11 +523,15 @@ void     plm_figure_init(plm_figure *fig, int nrows, int ncols);
 
 /* Return a pointer to the plot at (row, col).  Both 0-based.
    Fill the returned plm_plot with series, labels, styles as usual.   */
-plm_plot *plm_figure_plot(plm_figure *fig, int row, int col);
+plm_plot   *plm_figure_plot(plm_figure *fig, int row, int col);
 
-/* Render all subplots into one framebuffer.  Clears fb once, then
-   renders each plot into its cell.  Margins & labels stay within
-   each cell.                                                           */
+/* Switch cell to 3D mode and return an opaque 3D plot handle.
+   Requires plotmini3d.h to be included.  Cast the return to
+   plm3d_plot*.  Lazy-allocates 3D storage on first call.              */
+void *plm_figure_plot_3d(plm_figure *fig, int row, int col);
+
+/* Render all subplots (2D and 3D) into one framebuffer.
+   Clears fb once, then renders each cell.  Margins stay within cells. */
 void     plm_figure_render(const plm_figure *fig, plm_fb *fb);
 
 /* Free all internal storage; figure can be re-init'd or discarded.    */
@@ -937,6 +957,25 @@ static plm_color plm__cmap_jet(float t) {
         0.875f, 1.000f, 0.000f, 0.000f,
         1.000f, 0.500f, 0.000f, 0.000f };
     return plm__cmap_lerp(t, c, 9);
+}
+
+plm_color plm_cmap_lookup(float t, plm_cmap cmap) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    switch (cmap) {
+        default:
+        case PLM_CMAP_HEAT:     return plm__cmap_heat(t);
+        case PLM_CMAP_VIRIDIS:  return plm__cmap_viridis(t);
+        case PLM_CMAP_GRAY:     return plm__cmap_gray(t);
+        case PLM_CMAP_PLASMA:   return plm__cmap_plasma(t);
+        case PLM_CMAP_INFERNO:  return plm__cmap_inferno(t);
+        case PLM_CMAP_MAGMA:    return plm__cmap_magma(t);
+        case PLM_CMAP_TURBO:    return plm__cmap_turbo(t);
+        case PLM_CMAP_CIVIDIS:  return plm__cmap_cividis(t);
+        case PLM_CMAP_COOLWARM: return plm__cmap_coolwarm(t);
+        case PLM_CMAP_JET:      return plm__cmap_jet(t);
+        case PLM_CMAP_NONE:     return PLM_RGBA(128, 128, 128, 255);
+    }
 }
 
 void plm_imshow(plm_fb *fb, plm_irect rect,
@@ -3824,22 +3863,25 @@ void   plm_tick_fmt_usd(char *buf, int sz, double v);
 
 void plm_figure_init(plm_figure *fig, int nrows, int ncols) {
     int i, total;
+    const int S = PLOTMINI_TEXT_SCALE;
     memset(fig, 0, sizeof(*fig));
     fig->nrows = nrows < 1 ? 1 : nrows;
     fig->ncols = ncols < 1 ? 1 : ncols;
-    fig->hgap  = 20;
-    fig->vgap  = 20;
+    fig->hgap  = 20 * S;
+    fig->vgap  = 20 * S;
     total = fig->nrows * fig->ncols;
     fig->plots = (plm_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm_plot));
     for (i = 0; i < total; i++) {
         plm_plot *p = &fig->plots[i];
         plm_plot_init(p);
         /* Subplot cells have tighter space: reduce default margins. */
-        p->margin_left   = 55;
-        p->margin_top    = 30;
-        p->margin_right  = 20;
-        p->margin_bottom = 38;
+        p->margin_left   = 55 * S;
+        p->margin_top    = 30 * S;
+        p->margin_right  = 20 * S;
+        p->margin_bottom = 38 * S;
     }
+    /* plots3d, cell_types, render_3d stay NULL (2D-only until
+       plm_figure_plot_3d is called from plotmini3d.h)               */
 }
 
 plm_plot *plm_figure_plot(plm_figure *fig, int row, int col) {
@@ -3852,38 +3894,52 @@ plm_plot *plm_figure_plot(plm_figure *fig, int row, int col) {
 void plm_figure_render(const plm_figure *fig, plm_fb *fb) {
     int r, c;
     int cell_w, cell_h;
-    int fig_w, fig_h;
-    int fig_x0, fig_y0, fig_x1, fig_y1;
+    const int S = PLOTMINI_TEXT_SCALE;
 
     if (!fig || !fig->plots || fig->nrows < 1 || fig->ncols < 1) return;
 
     /* 1. clear entire framebuffer once */
     plm_fb_clear(fb, PLM_BG_COLOR);
 
-    /* 2. compute figure content bounds (we use the full fb for simplicity) */
-    fig_x0 = 0;
-    fig_y0 = 0;
-    fig_x1 = fb->width;
-    fig_y1 = fb->height;
-    fig_w  = fig_x1 - fig_x0;
-    fig_h  = fig_y1 - fig_y0;
+    /* 1b. overall figure title (centered in top padding, expands pad
+           if needed to fit).                                         */
+    int pad_x = fig->hgap;
+    int pad_y = fig->vgap;
+    if (fig->title && fig->title[0]) {
+        int th = plm_text_height();
+        int min_pad = th + 8 * S;
+        if (pad_y < min_pad) pad_y = min_pad;
+        int tw = plm_text_width(fig->title);
+        int tx = (fb->width - tw) / 2;
+        int ty = pad_y / 2 + th / 2;
+        plm_draw_text(fb, tx, ty, fig->title, PLM_FG_COLOR);
+    }
 
-    /* 3. cell size: distribute remaining space after gaps */
-    cell_w = (fig_w - (fig->ncols - 1) * fig->hgap) / fig->ncols;
-    cell_h = (fig_h - (fig->nrows - 1) * fig->vgap) / fig->nrows;
+    /* 2. cell size: distribute remaining space after gaps + padding */
+    cell_w = (fb->width  - 2 * pad_x - (fig->ncols - 1) * fig->hgap) / fig->ncols;
+    cell_h = (fb->height - 2 * pad_y - (fig->nrows - 1) * fig->vgap) / fig->nrows;
     if (cell_w < 40) cell_w = 40;
     if (cell_h < 40) cell_h = 40;
 
-    /* 4. render each cell */
+    /* 3. render each cell */
     for (r = 0; r < fig->nrows; r++) {
         for (c = 0; c < fig->ncols; c++) {
-            int cell_x0 = fig_x0 + c * (cell_w + fig->hgap);
-            int cell_y0 = fig_y0 + r * (cell_h + fig->vgap);
+            int cell_x0 = pad_x + c * (cell_w + fig->hgap);
+            int cell_y0 = pad_y + r * (cell_h + fig->vgap);
             int cell_x1 = cell_x0 + cell_w;
             int cell_y1 = cell_y0 + cell_h;
+            int idx = r * fig->ncols + c;
 
-            plm_plot *p = &fig->plots[r * fig->ncols + c];
-            plm__render_plot_into(p, fb, cell_x0, cell_y0, cell_x1, cell_y1);
+            if (fig->cell_types && fig->cell_types[idx] == 1 && fig->render_3d) {
+                /* 3D cell — delegate to plotmini3d render callback  */
+                void *p3d = (char*)fig->plots3d + idx * fig->plots3d_stride;
+                fig->render_3d(p3d, fb,
+                               cell_x0, cell_y0, cell_x1, cell_y1);
+            } else {
+                /* 2D cell */
+                plm_plot *p = &fig->plots[idx];
+                plm__render_plot_into(p, fb, cell_x0, cell_y0, cell_x1, cell_y1);
+            }
         }
     }
 }
@@ -3894,8 +3950,12 @@ void plm_figure_reset(plm_figure *fig) {
     total = fig->nrows * fig->ncols;
     for (i = 0; i < total; i++) {
         plm_plot_reset(&fig->plots[i]);
+        if (fig->plots3d && fig->reset_3d)
+            fig->reset_3d((char*)fig->plots3d + i * fig->plots3d_stride);
     }
     PLOTMINI_FREE(fig->plots);
+    PLOTMINI_FREE(fig->plots3d);
+    PLOTMINI_FREE(fig->cell_types);
     memset(fig, 0, sizeof(*fig));
 }
 
