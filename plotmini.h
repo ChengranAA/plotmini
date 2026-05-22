@@ -2168,6 +2168,63 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
             if (need_bottom > p->margin_bottom)
                 p->margin_bottom = need_bottom;
         }
+        /* expand top margin for title */
+        if (p->title) {
+            int th = PLM_FONT_H * S;
+            int need_top = th + gap + gap;  /* text + breathing room */
+            if (need_top > p->margin_top)
+                p->margin_top = need_top;
+        }
+        /* expand right margin for legend placed outside right */
+        if (p->legend_position == PLM_LEGEND_OUTSIDE_RIGHT) {
+            /* estimate legend width: we do a quick scan of legend entries */
+            int max_lw = 0;
+            int si;
+            for (si = 0; si < p->line_count; si++) {
+                if (p->lines[si].style.legend) {
+                    int w = plm_text_width(p->lines[si].style.legend);
+                    if (w > max_lw) max_lw = w;
+                }
+            }
+            for (si = 0; si < p->scatter_count; si++) {
+                if (p->scatters[si].style.legend) {
+                    int w = plm_text_width(p->scatters[si].style.legend);
+                    if (w > max_lw) max_lw = w;
+                }
+            }
+            for (si = 0; si < p->errorbar_count; si++) {
+                if (p->errorbars[si].style.legend) {
+                    int w = plm_text_width(p->errorbars[si].style.legend);
+                    if (w > max_lw) max_lw = w;
+                }
+            }
+            for (si = 0; si < p->band_count; si++) {
+                if (p->bands[si].style.legend) {
+                    int w = plm_text_width(p->bands[si].style.legend);
+                    if (w > max_lw) max_lw = w;
+                }
+            }
+            for (si = 0; si < p->bar_count; si++) {
+                if (p->bars[si].style.legend) {
+                    int w = plm_text_width(p->bars[si].style.legend);
+                    if (w > max_lw) max_lw = w;
+                }
+            }
+            for (si = 0; si < p->stem_count; si++) {
+                if (p->stems[si].style.legend) {
+                    int w = plm_text_width(p->stems[si].style.legend);
+                    if (w > max_lw) max_lw = w;
+                }
+            }
+            if (max_lw > 0) {
+                int sample_w = 14 * S;
+                int pad = 6 * S;
+                int box_w = pad + sample_w + 4 * S + max_lw + pad;
+                int need_right = box_w + 8;  /* box + margin */
+                if (need_right > p->margin_right)
+                    p->margin_right = need_right;
+            }
+        }
     }
 
     /* 2. compute plot area in pixels (inset from cell by margins) */
@@ -3462,24 +3519,55 @@ void plm_colorbar(plm_fb *fb, plm_irect rect,
     /* compute layout: bar region vs label/tick region */
     if (orient == PLM_CBAR_HORIZONTAL) {
         /* horizontal bar: gradient left(min) → right(max) */
+        int total_h = rect.y1 - rect.y0;
         int top_margin  = gap + char_h + tick_text_gap + tick_len + gap;
         int bot_margin  = (label ? char_h + gap : 0);
-        bar_h = rect.y1 - rect.y0 - top_margin - bot_margin;
-        if (bar_h < 6) bar_h = 6;
+        int min_bar = (total_h > 30 ? 10 : 4);
+
+        /* if the rect is too small, squeeze margins so everything fits */
+        if (total_h < top_margin + min_bar + bot_margin) {
+            int tight_gap = gap > 1 ? gap / 2 : 1;
+            int tight_tick_len = tick_len > 2 ? tick_len / 2 : 2;
+            int tight_tick_text_gap = tick_text_gap > 1 ? tick_text_gap / 2 : 1;
+            int tight_top = tight_gap + char_h + tight_tick_text_gap
+                          + tight_tick_len + tight_gap;
+            int tight_bot = (label ? char_h + tight_gap : 0);
+            if (total_h >= tight_top + min_bar + tight_bot) {
+                top_margin = tight_top;
+                bot_margin = tight_bot;
+            } else {
+                /* still too tight – drop tick labels, keep ticks + bar + label */
+                top_margin = tight_tick_len + tight_gap;
+                bot_margin = (label ? char_h + tight_gap : 0);
+                if (total_h < top_margin + 4 + bot_margin) {
+                    /* absolute minimum: just the bar + border */
+                    top_margin = 0;
+                    bot_margin = 0;
+                }
+            }
+        }
+
+        bar_h = total_h - top_margin - bot_margin;
+        if (bar_h < 4) bar_h = 4;
         bar_w = rect.x1 - rect.x0;
         bar_x0 = rect.x0;
         bar_y0 = rect.y0 + top_margin;
+        /* safety clamp: bar must end inside rect */
+        if (bar_y0 + bar_h > rect.y1) bar_h = rect.y1 - bar_y0;
+        if (bar_h < 2) bar_h = 2;
 
-        /* draw gradient */
+        /* draw gradient (clip every pixel to rect) */
         {
             int dx;
             for (dx = 0; dx < bar_w; dx++) {
+                int px = bar_x0 + dx;
+                if (px < rect.x0 || px >= rect.x1) continue;
                 float t = (float)dx / (float)(bar_w > 1 ? bar_w - 1 : 1);
                 plm_color c = cmap_fn(t);
                 int dy;
                 for (dy = 0; dy < bar_h; dy++) {
-                    int px = bar_x0 + dx;
                     int py = bar_y0 + dy;
+                    if (py < rect.y0 || py >= rect.y1) continue;
                     if (fb->bpp == 4) {
                         unsigned char *p = fb->pixels + py * fb->stride + px * 4;
                         p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = c.a;
@@ -3490,7 +3578,7 @@ void plm_colorbar(plm_fb *fb, plm_irect rect,
             }
         }
 
-        /* border */
+        /* border (clipped to rect via plm_fb_fill_rect) */
         {
             plm_irect br = { bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h };
             plm_color border = PLM_FG_COLOR;
@@ -3511,50 +3599,87 @@ void plm_colorbar(plm_fb *fb, plm_irect rect,
                 double t_val = (v - vmin) / range;
                 int tx = bar_x0 + (int)(t_val * (double)(bar_w - 1) + 0.5);
                 if (tx < bar_x0 || tx >= bar_x0 + bar_w) continue;
+                if (tx < rect.x0 || tx >= rect.x1) continue;
                 /* tick line upward */
                 int ty;
                 for (ty = bar_y0 - tick_len; ty < bar_y0; ty++) {
                     if (ty >= rect.y0 && ty < rect.y1)
                         plm__set_pixel(fb, tx, ty, PLM_FG_COLOR);
                 }
-                /* tick label */
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4g", v);
-                int tw = plm__text_width_s(buf, S);
-                int lx = tx - tw / 2;
-                int ly = bar_y0 - tick_len - tick_text_gap;
-                plm__draw_text_s(fb, lx, ly, buf, PLM_FG_COLOR, S);
+                /* tick label (only if top_margin has room for text) */
+                if (top_margin >= tick_len + tick_text_gap + char_h) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.4g", v);
+                    int tw = plm__text_width_s(buf, S);
+                    int lx = tx - tw / 2;
+                    int ly = bar_y0 - tick_len - tick_text_gap;
+                    /* clip text to stay inside rect (both axes) */
+                    if (ly >= rect.y0 + char_h &&
+                        lx + tw > rect.x0 && lx < rect.x1)
+                        plm__draw_text_s(fb, lx, ly, buf, PLM_FG_COLOR, S);
+                }
             }
         }
 
         /* label below bar */
-        if (label) {
+        if (label && bot_margin >= char_h) {
             int tw = plm__text_width_s(label, S);
             int lx = bar_x0 + (bar_w - tw) / 2;
             int ly = bar_y0 + bar_h + gap;
-            plm__draw_text_s(fb, lx, ly + char_h, label, PLM_FG_COLOR, S);
+            if (ly + char_h <= rect.y1 &&
+                lx + tw > rect.x0 && lx < rect.x1)
+                plm__draw_text_s(fb, lx, ly + char_h, label, PLM_FG_COLOR, S);
         }
     } else {
         /* vertical bar: gradient bottom(min) → top(max) */
+        int total_w = rect.x1 - rect.x0;
         int left_margin = gap + char_w + tick_text_gap + tick_len + gap;
         int right_margin = (label ? char_h + gap : 0);
-        bar_w = rect.x1 - rect.x0 - left_margin - right_margin;
-        if (bar_w < 6) bar_w = 6;
+        int min_bar = (total_w > 30 ? 10 : 4);
+
+        /* squeeze margins if the rect is too narrow */
+        if (total_w < left_margin + min_bar + right_margin) {
+            int tight_gap = gap > 1 ? gap / 2 : 1;
+            int tight_tick_len = tick_len > 2 ? tick_len / 2 : 2;
+            int tight_tick_text_gap = tick_text_gap > 1 ? tick_text_gap / 2 : 1;
+            int tight_left = tight_gap + char_w + tight_tick_text_gap
+                           + tight_tick_len + tight_gap;
+            int tight_right = (label ? char_h + tight_gap : 0);
+            if (total_w >= tight_left + min_bar + tight_right) {
+                left_margin  = tight_left;
+                right_margin = tight_right;
+            } else {
+                /* drop tick labels */
+                left_margin  = tight_tick_len + tight_gap;
+                right_margin = (label ? char_h + tight_gap : 0);
+                if (total_w < left_margin + 4 + right_margin) {
+                    left_margin  = 0;
+                    right_margin = 0;
+                }
+            }
+        }
+
+        bar_w = total_w - left_margin - right_margin;
+        if (bar_w < 4) bar_w = 4;
         bar_h = rect.y1 - rect.y0;
         bar_x0 = rect.x0 + left_margin;
         bar_y0 = rect.y0;
+        if (bar_x0 + bar_w > rect.x1) bar_w = rect.x1 - bar_x0;
+        if (bar_w < 2) bar_w = 2;
 
         /* draw gradient (bottom = vmin, top = vmax) */
         {
             int dy;
             for (dy = 0; dy < bar_h; dy++) {
+                int py = bar_y0 + dy;
+                if (py < rect.y0 || py >= rect.y1) continue;
                 /* flip: pixel y=0 is top, but vmin is at bottom */
                 float t = 1.0f - (float)dy / (float)(bar_h > 1 ? bar_h - 1 : 1);
                 plm_color c = cmap_fn(t);
                 int dx;
                 for (dx = 0; dx < bar_w; dx++) {
                     int px = bar_x0 + dx;
-                    int py = bar_y0 + dy;
+                    if (px < rect.x0 || px >= rect.x1) continue;
                     if (fb->bpp == 4) {
                         unsigned char *p = fb->pixels + py * fb->stride + px * 4;
                         p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = c.a;
@@ -3586,29 +3711,36 @@ void plm_colorbar(plm_fb *fb, plm_irect rect,
                 double t_val = (v - vmin) / range;
                 int ty = bar_y0 + (int)((1.0 - t_val) * (double)(bar_h - 1) + 0.5);
                 if (ty < bar_y0 || ty >= bar_y0 + bar_h) continue;
+                if (ty < rect.y0 || ty >= rect.y1) continue;
                 /* tick line to the left */
                 int tx;
                 for (tx = bar_x0 - tick_len; tx < bar_x0; tx++) {
                     if (tx >= rect.x0 && tx < rect.x1)
                         plm__set_pixel(fb, tx, ty, PLM_FG_COLOR);
                 }
-                /* tick label */
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4g", v);
-                int tw = plm__text_width_s(buf, S);
-                int lx = bar_x0 - tick_len - tick_text_gap - tw;
-                int ly = ty + char_h / 2 - 1;
-                plm__draw_text_s(fb, lx, ly, buf, PLM_FG_COLOR, S);
+                /* tick label (only if left_margin has room for text) */
+                if (left_margin >= tick_len + tick_text_gap + char_w) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.4g", v);
+                    int tw = plm__text_width_s(buf, S);
+                    int lx = bar_x0 - tick_len - tick_text_gap - tw;
+                    int ly = ty + char_h / 2 - 1;
+                    if (lx >= rect.x0 && ly >= rect.y0 &&
+                        ly - char_h < rect.y1)
+                        plm__draw_text_s(fb, lx, ly, buf, PLM_FG_COLOR, S);
+                }
             }
         }
 
         /* label to the right of the bar (rotated 90° CW) */
-        if (label) {
+        if (label && right_margin >= char_h) {
             int tw = plm__text_width_s(label, S);
             int lx = bar_x0 + bar_w + gap;
             int ly = bar_y0 + (bar_h + tw) / 2;
-            /* draw vertical label character by character */
-            {
+            /* clip: must fit inside rect horizontally, and
+               the rotated text (height char_h, width tw) must fit vertically */
+            if (lx + char_h <= rect.x1 &&
+                ly - tw >= rect.y0 && ly < rect.y1) {
                 const char *s = label;
                 int cx = lx, cy = ly;
                 while (*s) {

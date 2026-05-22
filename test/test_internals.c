@@ -189,7 +189,7 @@ TEST(autorange_lines_only)
 
     float x[] = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
     float y[] = { 10.0f, 20.0f, 15.0f, 25.0f, 30.0f };
-    plm_plot_add_line(&p, x, y, 5, (plm_line_style){PLM_BLUE, 1.0f, NULL, 0});
+    plm_plot_add_line(&p, x, y, 5, (plm_line_style){PLM_BLUE, 1.0f, NULL, 0, 0});
 
     /* trigger autorange (min==max on init) */
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
@@ -220,7 +220,7 @@ TEST(autorange_single_value)
 
     float x[] = { 5.0f };
     float y[] = { 7.0f };
-    plm_plot_add_line(&p, x, y, 1, (plm_line_style){PLM_BLUE, 1.0f, NULL, 0});
+    plm_plot_add_line(&p, x, y, 1, (plm_line_style){PLM_BLUE, 1.0f, NULL, 0, 0});
 
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,

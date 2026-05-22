@@ -20,9 +20,11 @@ int main(void) {
     unsigned char *img = stbi_load("../assets/cat.jpeg", &img_w, &img_h, &ch, 1);
     if (!img) { fprintf(stderr, "failed to load image\n"); return 1; }
 
-    /* Reserve bottom 110 px for the coolwarm horizontal demo */
+    /* Reserve bottom room for the coolwarm horizontal demo.
+       With TEXT_SCALE=2 the horizontal colorbar needs ~78 px +
+       wave band (30) + label + gaps → ~150 px total. */
     const int win_w = 1060, win_h = 720;
-    const int coolwarm_h = 110;
+    const int coolwarm_h = 160;
 
     struct mfb_window *win = mfb_open(
         "plotmini — colormaps + colorbar showcase", win_w, win_h);
@@ -54,7 +56,7 @@ int main(void) {
 
         const int cols = 3, rows = 3;
         const int gap = 16;
-        const int top_margin  = 80;
+        const int top_margin  = 60;
         const int left_margin = 16;
         const int right_margin = 70;
 
@@ -70,11 +72,13 @@ int main(void) {
                 int cx0 = left_margin + c * (cell_w + gap);
                 int cy0 = top_margin  + r * (cell_h + gap);
 
-                /* leave room for colorbar + name below */
-                int cbar_width = 22;
-                int cbar_gap   = 10;
+                /* leave room for colorbar + name below.
+                   With TEXT_SCALE=2 the vertical colorbar needs
+                   ~36 px left margin + bar + right side. */
+                int cbar_width = 50;
+                int cbar_gap   = 8;
                 int img_avail_w = cell_w - cbar_width - cbar_gap - 8;
-                int img_avail_h = cell_h - 18;
+                int img_avail_h = cell_h - 20;
                 if (img_avail_w < 40) img_avail_w = 40;
                 if (img_avail_h < 40) img_avail_h = 40;
 
@@ -116,9 +120,24 @@ int main(void) {
     /* Bottom: coolwarm diverging colormap + horizontal colorbar        */
     /* ================================================================ */
     {
-        const int demo_y0 = win_h - coolwarm_h + 16;
+        /* The horizontal colorbar (with TEXT_SCALE=2) needs:
+           top_margin(~38) + bar(~20) + label(~20) = ~78 px.
+           We also have a wave band + a label above.  Compute
+           positions bottom-up so everything fits. */
         const int demo_x0 = 40;
         const int demo_w = win_w - 80;
+        const int demo_bot = win_h - 10;   /* bottom padding */
+
+        /* --- colorbar (bottom-most element) --- */
+        int cbar_h = 80;   /* enough for bars + ticks + label at scale 2 */
+        plm_irect hcbar = { demo_x0, demo_bot - cbar_h,
+                            demo_x0 + demo_w, demo_bot };
+        plm_colorbar(&fb, hcbar, -1.0, 1.0, PLM_CMAP_COOLWARM,
+                     PLM_CBAR_HORIZONTAL, "correlation  (coolwarm)", 5);
+
+        /* --- wave band above colorbar --- */
+        int band_h = 30;
+        int band_y0 = hcbar.y0 - 8 - band_h;  /* 8 px gap above colorbar */
 
         const int n = 400;
         float *wave = (float *)malloc((size_t)n * sizeof(float));
@@ -126,33 +145,23 @@ int main(void) {
         for (i = 0; i < n; i++)
             wave[i] = sinf((float)i / (float)(n - 1) * 4.0f * (float)M_PI);
 
-        int band_h = 30;
-        plm_irect band_rect = { demo_x0, demo_y0, demo_x0 + demo_w, demo_y0 + band_h };
-
         float *band2d = (float *)malloc((size_t)n * (size_t)band_h * sizeof(float));
         int y;
         for (y = 0; y < band_h; y++) {
             for (i = 0; i < n; i++)
                 band2d[y * n + i] = wave[i];
         }
+        plm_irect band_rect = { demo_x0, band_y0, demo_x0 + demo_w, band_y0 + band_h };
         plm_imshow(&fb, band_rect, band2d, n, band_h,
                    -1.0, 1.0, PLM_CMAP_COOLWARM);
         free(band2d);
+        free(wave);
 
-        /* horizontal colorbar below */
-        {
-            plm_irect hcbar = { demo_x0, demo_y0 + band_h + 8,
-                                demo_x0 + demo_w, demo_y0 + band_h + 8 + 42 };
-            plm_colorbar(&fb, hcbar, -1.0, 1.0, PLM_CMAP_COOLWARM,
-                         PLM_CBAR_HORIZONTAL, "correlation  (coolwarm)", 5);
-        }
-
-        /* label above */
+        /* --- label above the band --- */
         {
             const char *lbl = "Diverging colormap: coolwarm  --  blue-white-red, zero-centered";
-            plm_draw_text(&fb, demo_x0, demo_y0 - 8, lbl, PLM_FG_COLOR);
+            plm_draw_text(&fb, demo_x0, band_y0 - 6, lbl, PLM_FG_COLOR);
         }
-        free(wave);
     }
 
     free(fimg);

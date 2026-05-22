@@ -98,7 +98,7 @@ TEST(figure_plots_independent)
     a->title = "Plot A";
     float ax[] = { 1.f, 2.f, 3.f };
     float ay[] = { 4.f, 5.f, 6.f };
-    plm_plot_add_line(a, ax, ay, 3, (plm_line_style){PLM_BLUE, 1.f, NULL, 0});
+    plm_plot_add_line(a, ax, ay, 3, (plm_line_style){PLM_BLUE, 1.f, NULL, 0, 0});
 
     /* cell (0,1) should be empty */
     plm_plot *b = plm_figure_plot(&fig, 0, 1);
@@ -125,7 +125,7 @@ TEST(figure_render_smoke)
             plm_plot *p = plm_figure_plot(&fig, r, c);
             float x[] = { 0.f, 1.f, 2.f, 3.f, 4.f };
             float y[] = { 0.f, 1.f, 4.f, 9.f, 16.f };
-            plm_plot_add_line(p, x, y, 5, (plm_line_style){PLM_BLUE, 1.f, NULL, 0});
+            plm_plot_add_line(p, x, y, 5, (plm_line_style){PLM_BLUE, 1.f, NULL, 0, 0});
         }
     }
 
@@ -159,7 +159,7 @@ TEST(figure_reset_clears)
     plm_plot *p = plm_figure_plot(&fig, 0, 0);
     float x[] = { 1.f };
     float y[] = { 2.f };
-    plm_plot_add_line(p, x, y, 1, (plm_line_style){PLM_BLUE, 1.f, NULL, 0});
+    plm_plot_add_line(p, x, y, 1, (plm_line_style){PLM_BLUE, 1.f, NULL, 0, 0});
 
     plm_figure_reset(&fig);
 
