@@ -148,7 +148,7 @@ typedef struct plm_line_style {
 
 /* ---- line series --------------------------------------------------- */
 typedef struct plm_line_series {
-    const float *x_data;     /* user-owned arrays                       */
+    const float *x_data;     /* internally-allocated copy (from add_line) */
     const float *y_data;
     int          count;
     plm_line_style style;
@@ -340,6 +340,9 @@ typedef struct plm_figure {
 /* Create a framebuffer.  The memory is owned by the caller;
    pass `pixels` already allocated or NULL to let the library allocate. */
 plm_fb plm_fb_create(unsigned char *pixels, int w, int h, plm_pixelfmt fmt);
+
+/* Free framebuffer internal storage (call when pixels==NULL was passed). */
+void   plm_fb_free(plm_fb *fb);
 
 /* Fill entire framebuffer with a solid colour. */
 void   plm_fb_clear(plm_fb *fb, plm_color c);
@@ -644,6 +647,13 @@ plm_fb plm_fb_create(unsigned char *pixels, int w, int h, plm_pixelfmt fmt) {
     return fb;
 }
 
+void plm_fb_free(plm_fb *fb) {
+    if (fb && fb->pixels) {
+        PLOTMINI_FREE(fb->pixels);
+        fb->pixels = NULL;
+    }
+}
+
 void plm_fb_clear(plm_fb *fb, plm_color c) {
     int y;
     if (fb->bpp == 4) {
@@ -723,7 +733,7 @@ int plm_fb_save_bmp(const plm_fb *fb, const char *path) {
     hdr[26] = 1;
     hdr[28] = 24;
     fwrite(hdr, 54, 1, f);
-    unsigned char *row = (unsigned char *)malloc((size_t)row_size);
+    unsigned char *row = (unsigned char *)PLOTMINI_MALLOC((size_t)row_size);
     if (!row) { fclose(f); return 1; }
     int y;
     for (y = h - 1; y >= 0; y--) {
@@ -742,7 +752,7 @@ int plm_fb_save_bmp(const plm_fb *fb, const char *path) {
         }
         fwrite(row, (size_t)row_size, 1, f);
     }
-    free(row);
+    PLOTMINI_FREE(row);
     fclose(f);
     return 0;
 }
