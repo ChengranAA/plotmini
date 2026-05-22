@@ -1,5 +1,5 @@
 #define PLOTMINI_IMPLEMENTATION
-#include "../plotmini.h"
+#include "../../plotmini.h"
 #include "dep/MiniFB.h"
 
 #include <math.h>
