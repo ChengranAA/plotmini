@@ -140,11 +140,20 @@ typedef enum plm_step_mode {
 
 /* ---- line style ---------------------------------------------------- */
 typedef struct plm_line_style {
-    plm_color      color;
-    float          width;      /* 0.0..N  pixel width  (0 = hairline)  */
-    const char    *legend;     /* optional legend label                 */
-    plm_step_mode  step_mode;  /* PLM_STEP_NONE = normal line          */
+    plm_color       color;
+    float           width;        /* 0.0..N  pixel width  (0 = hairline)  */
+    const char     *legend;       /* optional legend label                 */
+    plm_step_mode   step_mode;    /* PLM_STEP_NONE = normal line          */
+    unsigned short  dash_pattern; /* 16-bit mask: 1=draw,0=skip; 0=solid  */
 } plm_line_style;
+
+/* common dash patterns (16-bit, repeats every 16 px along the line) */
+#define PLM_DASH_SOLID      0x0000  /* solid (default)                  */
+#define PLM_DASH_DOTTED     0xAAAA  /* 1 on, 1 off (dotted)             */
+#define PLM_DASH_DASHED     0xFF00  /* 8 on, 8 off (dashed)             */
+#define PLM_DASH_DASHDOT    0xE0E0  /* 3 on, 1 off, 3 on, 9 off        */
+#define PLM_DASH_LONGDASH   0xFFF0  /* 12 on, 4 off (long dash)         */
+#define PLM_DASH_FINEDOT    0x8888  /* 1 on, 3 off (fine dot)           */
 
 /* ---- line series --------------------------------------------------- */
 typedef struct plm_line_series {
@@ -1072,7 +1081,8 @@ static int plm__clip_line_f(float *x0, float *y0, float *x1, float *y1,
 
 static void plm__wu_line(plm_fb *fb,
                           float x0, float y0, float x1, float y1,
-                          plm_color c) {
+                          plm_color c,
+                          unsigned short dash_pattern, float *dash_phase) {
     int steep = fabsf(y1 - y0) > fabsf(x1 - x0);
     if (steep) {
         { float t = x0; x0 = y0; y0 = t; }
@@ -1089,6 +1099,17 @@ static void plm__wu_line(plm_fb *fb,
     if (dx < 1e-6f) gradient = 1.0f;
     else             gradient = dy / dx;
 
+    /* dash setup: compute distance-per-x-step along the line */
+    int has_dash = (dash_pattern != 0);
+    float len = sqrtf(dx*dx + dy*dy);
+    float dist_per_x;
+    if (dx < 1e-6f) dist_per_x = fabsf(dy);
+    else            dist_per_x = len / dx;
+    float phase = dash_phase ? *dash_phase : 0.0f;
+
+    /* helper: test if a pixel at distance d from line start is "on" */
+    #define PLM__DASH_DRAW(d) (!has_dash || ((dash_pattern >> (((int)(phase + (d))) & 15)) & 1))
+
     /* ---- handle first endpoint ---- */
     int   xpxl1 = (int)x0;
     float yend  = y0 + gradient * ((float)xpxl1 + 1.0f - x0);
@@ -1098,12 +1119,14 @@ static void plm__wu_line(plm_fb *fb,
         float fpart = yend - (float)ipart;
         unsigned char a1 = (unsigned char)((1.0f - fpart) * xgap * 255.0f);
         unsigned char a2 = (unsigned char)(fpart * xgap * 255.0f);
-        if (steep) {
-            plm__blend_pixel(fb, ipart,     xpxl1, c, a1);
-            plm__blend_pixel(fb, ipart + 1, xpxl1, c, a2);
-        } else {
-            plm__blend_pixel(fb, xpxl1, ipart,     c, a1);
-            plm__blend_pixel(fb, xpxl1, ipart + 1, c, a2);
+        if (PLM__DASH_DRAW((xpxl1 - x0) * dist_per_x)) {
+            if (steep) {
+                plm__blend_pixel(fb, ipart,     xpxl1, c, a1);
+                plm__blend_pixel(fb, ipart + 1, xpxl1, c, a2);
+            } else {
+                plm__blend_pixel(fb, xpxl1, ipart,     c, a1);
+                plm__blend_pixel(fb, xpxl1, ipart + 1, c, a2);
+            }
         }
     }
 
@@ -1116,12 +1139,14 @@ static void plm__wu_line(plm_fb *fb,
         float fpart = yend2 - (float)ipart;
         unsigned char a1 = (unsigned char)((1.0f - fpart) * xgap2 * 255.0f);
         unsigned char a2 = (unsigned char)(fpart * xgap2 * 255.0f);
-        if (steep) {
-            plm__blend_pixel(fb, ipart,     xpxl2, c, a1);
-            plm__blend_pixel(fb, ipart + 1, xpxl2, c, a2);
-        } else {
-            plm__blend_pixel(fb, xpxl2, ipart,     c, a1);
-            plm__blend_pixel(fb, xpxl2, ipart + 1, c, a2);
+        if (PLM__DASH_DRAW((xpxl2 - x0) * dist_per_x)) {
+            if (steep) {
+                plm__blend_pixel(fb, ipart,     xpxl2, c, a1);
+                plm__blend_pixel(fb, ipart + 1, xpxl2, c, a2);
+            } else {
+                plm__blend_pixel(fb, xpxl2, ipart,     c, a1);
+                plm__blend_pixel(fb, xpxl2, ipart + 1, c, a2);
+            }
         }
     }
 
@@ -1134,23 +1159,31 @@ static void plm__wu_line(plm_fb *fb,
             float fpart = intery - (float)ipart;
             unsigned char a1 = (unsigned char)((1.0f - fpart) * 255.0f);
             unsigned char a2 = (unsigned char)(fpart * 255.0f);
-            if (steep) {
-                plm__blend_pixel(fb, ipart,     x, c, a1);
-                plm__blend_pixel(fb, ipart + 1, x, c, a2);
-            } else {
-                plm__blend_pixel(fb, x, ipart,     c, a1);
-                plm__blend_pixel(fb, x, ipart + 1, c, a2);
+            if (PLM__DASH_DRAW((x - x0) * dist_per_x)) {
+                if (steep) {
+                    plm__blend_pixel(fb, ipart,     x, c, a1);
+                    plm__blend_pixel(fb, ipart + 1, x, c, a2);
+                } else {
+                    plm__blend_pixel(fb, x, ipart,     c, a1);
+                    plm__blend_pixel(fb, x, ipart + 1, c, a2);
+                }
             }
             intery += gradient;
         }
     }
+
+    /* advance phase by this segment's length */
+    if (dash_phase) *dash_phase += len;
+
+    #undef PLM__DASH_DRAW
 }
 
 static void plm__wu_line_thick(plm_fb *fb,
                                 float x0, float y0, float x1, float y1,
-                                plm_color c, float width) {
+                                plm_color c, float width,
+                                unsigned short dash_pattern, float *dash_phase) {
     if (width <= 1.0f) {
-        plm__wu_line(fb, x0, y0, x1, y1, c);
+        plm__wu_line(fb, x0, y0, x1, y1, c, dash_pattern, dash_phase);
         return;
     }
     int n = (int)(width + 0.5f);
@@ -1162,11 +1195,22 @@ static void plm__wu_line_thick(plm_fb *fb,
     float px = -dy / len;
     float py =  dx / len;
     int i;
+    /* For thick dashed lines, save phase before first stroke and
+       restore it for each parallel stroke so all strokes share the
+       same dash pattern alignment. Only advance phase once. */
+    float saved_phase = dash_phase ? *dash_phase : 0.0f;
     for (i = 0; i < n; i++) {
         float off = (float)i - half;
+        float tmp_phase = saved_phase;
         plm__wu_line(fb,
             x0 + px * off, y0 + py * off,
-            x1 + px * off, y1 + py * off, c);
+            x1 + px * off, y1 + py * off, c,
+            dash_pattern, &tmp_phase);
+    }
+    /* advance phase exactly once for this segment */
+    if (dash_phase) {
+        float dx2 = x1 - x0, dy2 = y1 - y0;
+        *dash_phase += sqrtf(dx2*dx2 + dy2*dy2);
     }
 }
 /* ---- embedded bitmap font ------------------------------------------ */
@@ -2340,7 +2384,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                         float py0=plm__map_y(p,bs->y_upper[i-1]);
                         float px1=plm__map_x(p,bs->x_data[i]);
                         float py1=plm__map_y(p,bs->y_upper[i]);
-                        plm__wu_line_thick(fb,px0,py0,px1,py1,sc,sw);
+                        plm__wu_line_thick(fb,px0,py0,px1,py1,sc,sw,0,0);
                     }
                     if (seg_start < 0) seg_start = i;
                   }
@@ -2356,7 +2400,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                         float py0=plm__map_y(p,bs->y_lower[i-1]);
                         float px1=plm__map_x(p,bs->x_data[i]);
                         float py1=plm__map_y(p,bs->y_lower[i]);
-                        plm__wu_line_thick(fb,px0,py0,px1,py1,sc,sw);
+                        plm__wu_line_thick(fb,px0,py0,px1,py1,sc,sw,0,0);
                     }
                     if (seg_start < 0) seg_start = i;
                   }
@@ -2466,10 +2510,12 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
             int i;
             int seg_start = -1;
             float prev_px = 0.0f, prev_py = 0.0f;
+            float dash_phase = 0.0f;
             for (i = 0; i < ls->count; i++) {
                 /* NaN gap handling */
                 if (plm__isnan(ls->x_data[i]) || plm__isnan(ls->y_data[i])) {
                     seg_start = -1;
+                    dash_phase = 0.0f;
                     continue;
                 }
                 float px = plm__map_x(p, ls->x_data[i]);
@@ -2483,7 +2529,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                                              (float)(p->plot_area.x1 - 1.5f),
                                              (float)(p->plot_area.y1 - 1.5f))) {
                             plm__wu_line_thick(fb, px0, py0, px1, py1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                         }
                     } else if (ls->style.step_mode == PLM_STEP_PRE) {
                         /* horizontal then vertical */
@@ -2494,7 +2541,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, hx0, hy0, hx1, hy1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                         float vx0 = px, vy0 = prev_py;
                         float vx1 = px, vy1 = py;
                         if (plm__clip_line_f(&vx0, &vy0, &vx1, &vy1,
@@ -2502,7 +2550,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, vx0, vy0, vx1, vy1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                     } else if (ls->style.step_mode == PLM_STEP_POST) {
                         /* vertical then horizontal */
                         float vx0 = prev_px, vy0 = prev_py;
@@ -2512,7 +2561,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, vx0, vy0, vx1, vy1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                         float hx0 = prev_px, hy0 = py;
                         float hx1 = px,      hy1 = py;
                         if (plm__clip_line_f(&hx0, &hy0, &hx1, &hy1,
@@ -2520,7 +2570,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, hx0, hy0, hx1, hy1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                     } else { /* PLM_STEP_MID */
                         float mid_x = (prev_px + px) * 0.5f;
                         float vx0 = prev_px, vy0 = prev_py;
@@ -2530,7 +2581,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, vx0, vy0, vx1, vy1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                         float hx0 = mid_x, hy0 = prev_py;
                         float hx1 = mid_x, hy1 = py;
                         if (plm__clip_line_f(&hx0, &hy0, &hx1, &hy1,
@@ -2538,7 +2590,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, hx0, hy0, hx1, hy1,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                         float vx0b = mid_x, vy0b = py;
                         float vx1b = px,    vy1b = py;
                         if (plm__clip_line_f(&vx0b, &vy0b, &vx1b, &vy1b,
@@ -2546,7 +2599,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)(p->plot_area.x1 - 1.5f),
                              (float)(p->plot_area.y1 - 1.5f)))
                             plm__wu_line_thick(fb, vx0b, vy0b, vx1b, vy1b,
-                                               ls->style.color, ls->style.width);
+                                               ls->style.color, ls->style.width,
+                                               ls->style.dash_pattern, &dash_phase);
                     }
                 }
                 prev_px = px; prev_py = py;
@@ -2673,7 +2727,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                     if (y0 < (float)p->plot_area.y0) y0 = (float)p->plot_area.y0;
                     if (y1 > (float)(p->plot_area.y1 - 1.5f)) y1 = (float)(p->plot_area.y1 - 1.5f);
                     if (y0 <= y1)
-                        plm__wu_line_thick(fb, px, y0, px, y1, lc, lw);
+                        plm__wu_line_thick(fb, px, y0, px, y1, lc, lw, 0, 0);
                 }
                 /* marker at top */
                 if (ss->style.marker_radius > 0.0f) {
@@ -2714,7 +2768,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                              (float)p->plot_area.x0, (float)p->plot_area.y0,
                              (float)(p->plot_area.x1-1),
                              (float)(p->plot_area.y1-1)))
-                            plm__wu_line_thick(fb, px0, py0, px1, py1, lc, lw);
+                            plm__wu_line_thick(fb, px0, py0, px1, py1, lc, lw, 0, 0);
                     }
                     if (seg_start < 0) seg_start = i;
                 }
@@ -2750,15 +2804,15 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                             if (ylo > ymax) ylo = ymax;
                             if (yhi < ymin) yhi = ymin;
                             if (yhi > ymax) yhi = ymax;
-                            plm__wu_line_thick(fb, px, ylo, px, yhi, lc, lw);
+                            plm__wu_line_thick(fb, px, ylo, px, yhi, lc, lw, 0, 0);
                             if (cap > 0.0f) {
                                 float x0 = px - cap, x1 = px + cap;
                                 if (x0 < (float)p->plot_area.x0)
                                     x0 = (float)p->plot_area.x0;
                                 if (x1 > (float)(p->plot_area.x1-1))
                                     x1 = (float)(p->plot_area.x1-1);
-                                plm__wu_line_thick(fb, x0, ylo, x1, ylo, lc, lw);
-                                plm__wu_line_thick(fb, x0, yhi, x1, yhi, lc, lw);
+                                plm__wu_line_thick(fb, x0, ylo, x1, ylo, lc, lw, 0, 0);
+                                plm__wu_line_thick(fb, x0, yhi, x1, yhi, lc, lw, 0, 0);
                             }
                         }
                     }
@@ -2785,15 +2839,15 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                             if (xlo > xmax) xlo = xmax;
                             if (xhi < xmin) xhi = xmin;
                             if (xhi > xmax) xhi = xmax;
-                            plm__wu_line_thick(fb, xlo, py, xhi, py, lc, lw);
+                            plm__wu_line_thick(fb, xlo, py, xhi, py, lc, lw, 0, 0);
                             if (cap > 0.0f) {
                                 float y0 = py - cap, y1 = py + cap;
                                 if (y0 < (float)p->plot_area.y0)
                                     y0 = (float)p->plot_area.y0;
                                 if (y1 > (float)(p->plot_area.y1-1))
                                     y1 = (float)(p->plot_area.y1-1);
-                                plm__wu_line_thick(fb, xlo, y0, xlo, y1, lc, lw);
-                                plm__wu_line_thick(fb, xhi, y0, xhi, y1, lc, lw);
+                                plm__wu_line_thick(fb, xlo, y0, xlo, y1, lc, lw, 0, 0);
+                                plm__wu_line_thick(fb, xhi, y0, xhi, y1, lc, lw, 0, 0);
                             }
                         }
                     }
@@ -3247,7 +3301,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
 
     /* 13. draw legend (if enabled) */
     if (p->legend_position != PLM_LEGEND_NONE) {
-        struct { const char *label; plm_color color; int is_line; int is_marker; } entries[64];
+        struct { const char *label; plm_color color; int is_line; int is_marker; unsigned short dash_pattern; } entries[64];
         int entry_count = 0;
         int si;
         for (si = 0; si < p->line_count && entry_count < 64; si++) {
@@ -3256,6 +3310,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 entries[entry_count].color = p->lines[si].style.color;
                 entries[entry_count].is_line = 1;
                 entries[entry_count].is_marker = 0;
+                entries[entry_count].dash_pattern = p->lines[si].style.dash_pattern;
                 entry_count++;
             }
         }
@@ -3274,6 +3329,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 entries[entry_count].color = p->errorbars[si].style.line_color;
                 entries[entry_count].is_line = 1;
                 entries[entry_count].is_marker = (p->errorbars[si].style.marker_radius > 0.0f);
+                entries[entry_count].dash_pattern = 0;
                 entry_count++;
             }
         }
@@ -3346,7 +3402,8 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 int sy = ey + entry_h / 2;
                 if (entries[i].is_line) {
                     plm__wu_line_thick(fb, (float)sx, (float)sy,
-                        (float)(sx + sample_w), (float)sy, entries[i].color, 2.0f);
+                        (float)(sx + sample_w), (float)sy, entries[i].color, 2.0f,
+                        entries[i].dash_pattern, 0);
                 } else if (entries[i].is_marker) {
                     plm__fill_circle(fb, sx + sample_w / 2, sy, 3.0f, entries[i].color);
                 } else {
