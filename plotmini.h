@@ -141,6 +141,20 @@ typedef struct plm_hist_series {
     plm_bar_style  style;
 } plm_hist_series;
 
+/* ---- scatter series ------------------------------------------------ */
+typedef struct plm_scatter_style {
+    plm_color    color;
+    float        radius;       /* dot radius in pixels, default 2.0      */
+    const char  *legend;
+} plm_scatter_style;
+
+typedef struct plm_scatter_series {
+    const float        *x_data;
+    const float        *y_data;
+    int                 count;
+    plm_scatter_style   style;
+} plm_scatter_series;
+
 /* ---- a complete plot description (hybrid retained model) ----------- */
 typedef struct plm_plot {
     /* axes */
@@ -166,6 +180,10 @@ typedef struct plm_plot {
     plm_hist_series *hists;
     int              hist_count;
     int              hist_cap;     /* internal                           */
+
+    plm_scatter_series *scatters;
+    int                 scatter_count;
+    int                 scatter_cap;  /* internal                        */
 
     /* internal state (set during render, read-only for user)           */
     plm_irect    plot_area;   /* pixel rect of the data region          */
@@ -237,6 +255,11 @@ void   plm_plot_add_hist(plm_plot *p,
                           const float *samples, int count,
                           int bins, int density,
                           plm_bar_style style);
+
+/* Append a scatter series.  Data is *copied* internally. */
+void   plm_plot_add_scatter(plm_plot *p,
+                             const float *x, const float *y, int count,
+                             plm_scatter_style style);
 
 /* ---- rendering ----------------------------------------------------- */
 
@@ -348,6 +371,35 @@ static void plm__blend_pixel(plm_fb *fb, int x, int y, plm_color c, unsigned cha
         dst[1] = (unsigned char)(((unsigned int)c.g * alpha + (unsigned int)dst[1] * inv_a) >> 8);
         dst[2] = (unsigned char)(((unsigned int)c.b * alpha + (unsigned int)dst[2] * inv_a) >> 8);
         /* leave dst[3] (alpha) unchanged -- premultiplied blending */
+    }
+}
+
+/* Draw a filled, anti-aliased circle.  Used for scatter dots. */
+static void plm__fill_circle(plm_fb *fb, int cx, int cy, float radius, plm_color color) {
+    int r = (int)(radius + 0.5f);
+    if (r < 1) r = 1;
+    int y;
+    for (y = -r; y <= r; y++) {
+        float wy = (float)(y * y);
+        float r2 = radius * radius;
+        if (wy >= r2 + radius) continue;  /* completely outside */
+        float half_wf = sqrtf(r2 - wy);
+        int x0 = (int)((float)cx - half_wf);
+        int x1 = (int)((float)cx + half_wf + 0.9999f);
+        int x;
+        for (x = x0; x <= x1; x++) {
+            float dx = (float)(x - cx);
+            float dy = (float)y;
+            float dist = sqrtf(dx * dx + dy * dy);
+            if (dist <= radius - 0.5f) {
+                plm__set_pixel(fb, x, cy + y, color);
+            } else if (dist < radius + 0.5f) {
+                float t = radius + 0.5f - dist;   /* 0..1 fade band */
+                if (t > 1.0f) t = 1.0f;
+                unsigned char alpha = (unsigned char)(t * 255.0f);
+                plm__blend_pixel(fb, x, cy + y, color, alpha);
+            }
+        }
     }
 }
 
@@ -897,6 +949,7 @@ void plm_plot_init(plm_plot *p) {
 void plm_plot_reset(plm_plot *p) {
     if (p->lines) PLOTMINI_FREE(p->lines);
     if (p->hists) PLOTMINI_FREE(p->hists);
+    if (p->scatters) PLOTMINI_FREE(p->scatters);
     plm_plot_init(p);
 }
 
@@ -942,11 +995,32 @@ void plm_plot_add_hist(plm_plot *p,
     hs->style   = style;
 }
 
+void plm_plot_add_scatter(plm_plot *p,
+                           const float *x, const float *y, int count,
+                           plm_scatter_style style) {
+    if (count <= 0) return;
+    if (p->scatter_count + 1 > p->scatter_cap) {
+        int new_cap = p->scatter_cap ? p->scatter_cap * 2 : 4;
+        p->scatters = (plm_scatter_series *)realloc(p->scatters,
+                          (size_t)new_cap * sizeof(plm_scatter_series));
+        p->scatter_cap = new_cap;
+    }
+    plm_scatter_series *ss = &p->scatters[p->scatter_count++];
+    ss->x_data = (const float *)malloc((size_t)count * sizeof(float));
+    ss->y_data = (const float *)malloc((size_t)count * sizeof(float));
+    memcpy((void*)ss->x_data, x, (size_t)count * sizeof(float));
+    memcpy((void*)ss->y_data, y, (size_t)count * sizeof(float));
+    ss->count  = count;
+    ss->style  = style;
+    if (ss->style.radius <= 0.0f) ss->style.radius = 2.0f;
+}
+
 /* ---- auto-range ---------------------------------------------------- */
 
 static void plm__axis_autorange(plm_axis *ax,
                                  const plm_line_series *lines, int lc,
                                  const plm_hist_series *hists, int hc,
+                                 const plm_scatter_series *scatters, int sc,
                                  int is_y) {
     double lo =  DBL_MAX;
     double hi = -DBL_MAX;
@@ -957,6 +1031,19 @@ static void plm__axis_autorange(plm_axis *ax,
         const float *data = is_y ? lines[i].y_data : lines[i].x_data;
         int j;
         for (j = 0; j < lines[i].count; j++) {
+            float v = data[j];
+            if (!plm__isnan(v)) {
+                if ((double)v < lo) lo = (double)v;
+                if ((double)v > hi) hi = (double)v;
+                found = 1;
+            }
+        }
+    }
+
+    for (i = 0; i < sc; i++) {
+        const float *data = is_y ? scatters[i].y_data : scatters[i].x_data;
+        int j;
+        for (j = 0; j < scatters[i].count; j++) {
             float v = data[j];
             if (!plm__isnan(v)) {
                 if ((double)v < lo) lo = (double)v;
@@ -1081,11 +1168,13 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
     /* 1. auto-range if requested */
     if (p->x_axis.min == p->x_axis.max) {
         plm__axis_autorange(&p->x_axis, p->lines, p->line_count,
-                             p->hists, p->hist_count, 0);
+                             p->hists, p->hist_count,
+                             p->scatters, p->scatter_count, 0);
     }
     if (p->y_axis.min == p->y_axis.max) {
         plm__axis_autorange(&p->y_axis, p->lines, p->line_count,
-                             p->hists, p->hist_count, 1);
+                             p->hists, p->hist_count,
+                             p->scatters, p->scatter_count, 1);
     }
 
     /* 2. compute plot area in pixels (inset from cell by margins) */
@@ -1280,14 +1369,36 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
-    /* 9. draw title (centred within the cell) */
+    /* 9. draw scatter series */
+    {
+        int si;
+        for (si = 0; si < p->scatter_count; si++) {
+            const plm_scatter_series *ss = &p->scatters[si];
+            int i;
+            for (i = 0; i < ss->count; i++) {
+                if (plm__isnan(ss->x_data[i]) || plm__isnan(ss->y_data[i]))
+                    continue;
+                float px = plm__map_x(p, ss->x_data[i]);
+                float py = plm__map_y(p, ss->y_data[i]);
+                int ix = (int)(px + 0.5f);
+                int iy = (int)(py + 0.5f);
+                /* only draw if centre is inside plot area */
+                if (ix >= p->plot_area.x0 && ix < p->plot_area.x1 &&
+                    iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                    plm__fill_circle(fb, ix, iy, ss->style.radius, ss->style.color);
+                }
+            }
+        }
+    }
+
+    /* 10. draw title (centred within the cell) */
     if (p->title) {
         int tw = plm_text_width(p->title);
         int cx = cell_x0 + (cell_x1 - cell_x0) / 2;
         plm_draw_text(fb, cx - tw / 2, cell_y0 + 20, p->title, PLM_BLACK);
     }
 
-    /* 10. draw axis labels */
+    /* 11. draw axis labels */
     if (p->x_label) {
         int tw = plm_text_width(p->x_label);
         int cx = p->plot_area.x0 + (p->plot_area.x1 - p->plot_area.x0) / 2;
@@ -1299,7 +1410,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         plm_draw_text(fb, cell_x0 + 2, ty, p->y_label, PLM_BLACK);
     }
 
-    /* 11. draw tick labels */
+    /* 12. draw tick labels */
     {
         double range = p->x_axis.max - p->x_axis.min;
         double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?

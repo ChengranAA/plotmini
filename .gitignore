@@ -8,4 +8,7 @@ examples/02_histogram
 examples/03_styling
 examples/04_imshow
 examples/05_subplot
+examples/06_animated
+examples/07_fractal
+examples/08_scatter
 examples/dep
