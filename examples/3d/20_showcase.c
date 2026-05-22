@@ -16,7 +16,7 @@
 /* ------------------------------------------------------------------ */
 /*  plotmini3d — Dark Showcase                                         */
 /*  A single dramatic surface + spiral, side-lit against dark theme.   */
-/*  arrows=rotate  P=persp/ortho  G=grid  L=light  R=reset  ESC=quit  */
+/*  arrows=rotate  P=persp/ortho  G=grid  L=light  S=save  R=reset  ESC=quit  */
 /* ------------------------------------------------------------------ */
 
 int main(void) {
@@ -88,6 +88,7 @@ int main(void) {
         { static int w = 0; if (keys[MFB_KB_KEY_P]) { if (!w) { persp    = !persp;    changed = 1; } w = 1; } else w = 0; }
         { static int w = 0; if (keys[MFB_KB_KEY_G]) { if (!w) { grid_on  = !grid_on;  changed = 1; } w = 1; } else w = 0; }
         { static int w = 0; if (keys[MFB_KB_KEY_L]) { if (!w) { light_on = !light_on; changed = 1; } w = 1; } else w = 0; }
+        { static int w = 0; if (keys[MFB_KB_KEY_S]) { if (!w) { plm_fb_save_bmp(&fb, "showcase.bmp"); } w = 1; } else w = 0; }
 
         if (elevation >  89.0) elevation =  89.0;
         if (elevation < -89.0) elevation = -89.0;
@@ -137,10 +138,10 @@ int main(void) {
         /* Status line in bottom-left corner */
         {
             char buf[64];
-            snprintf(buf, sizeof(buf), "az:%.0f el:%.0f %s %s",
-                     azimuth, elevation,
-                     persp ? "persp" : "ortho",
-                     light_on ? "lit" : "flat");
+            snprintf(buf, sizeof(buf), "az:%.0f el:%.0f %s %s [S:save BMP]",
+                                 azimuth, elevation,
+                                 persp ? "persp" : "ortho",
+                                 light_on ? "lit" : "flat");
             plm_draw_text(&fb, 8, win_h - 8, buf,
                           (plm_color){128, 128, 128, 255});
         }

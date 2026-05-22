@@ -18,3 +18,4 @@ test/test_*
 
 # macOS
 .DS_Store
+examples/dep
