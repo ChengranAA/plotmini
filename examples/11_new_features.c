@@ -12,20 +12,6 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* custom tick formatter: show values as powers of 10 */
-static void log_formatter(char *buf, int buf_size, double value) {
-    (void)buf_size;
-    if (value >= 1.0) {
-        int exp = (int)log10(value);
-        if (value == pow(10.0, (double)exp))
-            snprintf(buf, (size_t)buf_size, "10^%d", exp);
-        else
-            snprintf(buf, (size_t)buf_size, "%.4g", value);
-    } else {
-        snprintf(buf, (size_t)buf_size, "%.4g", value);
-    }
-}
-
 int main(void) {
     const int win_w = 960;
     const int win_h = 720;
@@ -87,7 +73,7 @@ int main(void) {
         p->x_label = "x";
         p->y_label = "magnitude";
         p->y_axis.scale = PLM_LOG;
-        p->y_axis.tick_formatter = log_formatter;
+        p->y_axis.tick_formatter = plm_tick_fmt_log10;
         p->legend_position = PLM_LEGEND_TOP_RIGHT;
 
         const int n = 15;

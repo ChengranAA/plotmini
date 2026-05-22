@@ -15,14 +15,6 @@
 
 /* ---- custom tick formatters ---- */
 
-static void log10_formatter(char *buf, int buf_size, double value) {
-    (void)buf_size;
-    if (value >= 1.0 && value == pow(10.0, floor(log10(value))))
-        snprintf(buf, (size_t)buf_size, "10^%d", (int)log10(value));
-    else
-        snprintf(buf, (size_t)buf_size, "%.4g", value);
-}
-
 /* ---- helper: normal-distribution PDF ---- */
 static float normal_pdf(float x, float mu, float sigma) {
     float z = (x - mu) / sigma;
@@ -260,8 +252,8 @@ int main(void) {
         p->y_label = "magnitude";
         p->x_axis.scale = PLM_LOG;
         p->y_axis.scale = PLM_LOG;
-        p->x_axis.tick_formatter = log10_formatter;
-        p->y_axis.tick_formatter = log10_formatter;
+        p->x_axis.tick_formatter = plm_tick_fmt_log10;
+        p->y_axis.tick_formatter = plm_tick_fmt_log10;
         p->legend_position = PLM_LEGEND_TOP_RIGHT;
 
         const int n = 50;

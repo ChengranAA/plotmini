@@ -446,6 +446,21 @@ int    plm_fb_save_bmp(const plm_fb *fb, const char *path);
    call this repeatedly with different fb sizes or updated data. */
 void   plm_render(const plm_plot *p, plm_fb *fb);
 
+/* ---- built-in tick formatters -------------------------------------- */
+
+/* Default: "%.4g" */
+void   plm_tick_fmt_default(char *buf, int sz, double v);
+/* Scientific: "%.2e" */
+void   plm_tick_fmt_sci(char *buf, int sz, double v);
+/* Integer: "%.0f" */
+void   plm_tick_fmt_int(char *buf, int sz, double v);
+/* Percentage: "%.0f%%" (multiplies v by 100) */
+void   plm_tick_fmt_pct(char *buf, int sz, double v);
+/* Log10: "10^n" for exact powers of 10, else "%.4g" */
+void   plm_tick_fmt_log10(char *buf, int sz, double v);
+/* Currency: "$%.2f" */
+void   plm_tick_fmt_usd(char *buf, int sz, double v);
+
 /* ---- subplot / figure ---------------------------------------------- */
 
 /* Initialise a figure with `nrows` x `ncols` grid of subplots.
@@ -1209,6 +1224,31 @@ static void plm__draw_char_rot90(plm_fb *fb, int x, int y, int ch,
 }
 
 #endif /* PLOTMINI_NO_FONT */
+
+/* ---- built-in tick formatters (implementations) -------------------- */
+
+void plm_tick_fmt_default(char *buf, int sz, double v) {
+    (void)sz; snprintf(buf, 32, "%.4g", v);
+}
+void plm_tick_fmt_sci(char *buf, int sz, double v) {
+    (void)sz; snprintf(buf, 32, "%.2e", v);
+}
+void plm_tick_fmt_int(char *buf, int sz, double v) {
+    (void)sz; snprintf(buf, 32, "%.0f", v);
+}
+void plm_tick_fmt_pct(char *buf, int sz, double v) {
+    (void)sz; snprintf(buf, 32, "%.0f%%%%", v * 100.0);
+}
+void plm_tick_fmt_log10(char *buf, int sz, double v) {
+    (void)sz;
+    if (v >= 1.0 && v == pow(10.0, floor(log10(v))))
+        snprintf(buf, 32, "10^%d", (int)log10(v));
+    else
+        snprintf(buf, 32, "%.4g", v);
+}
+void plm_tick_fmt_usd(char *buf, int sz, double v) {
+    (void)sz; snprintf(buf, 32, "$%.2f", v);
+}
 
 /* ---- plot lifecycle ------------------------------------------------ */
 
@@ -3170,6 +3210,21 @@ void plm_render(const plm_plot *p, plm_fb *fb) {
     /* delegate to the cell-based renderer */
     plm__render_plot_into(pp, fb, 0, 0, fb->width, fb->height);
 }
+
+/* ---- built-in tick formatters -------------------------------------- */
+
+/* Default: "%.4g" */
+void   plm_tick_fmt_default(char *buf, int sz, double v);
+/* Scientific: "%.2e" */
+void   plm_tick_fmt_sci(char *buf, int sz, double v);
+/* Integer: "%.0f" */
+void   plm_tick_fmt_int(char *buf, int sz, double v);
+/* Percentage: "%.0f%%" (multiplies v by 100) */
+void   plm_tick_fmt_pct(char *buf, int sz, double v);
+/* Log10: "10^n" for exact powers of 10, else "%.4g" */
+void   plm_tick_fmt_log10(char *buf, int sz, double v);
+/* Currency: "$%.2f" */
+void   plm_tick_fmt_usd(char *buf, int sz, double v);
 
 /* ---- subplot / figure ---------------------------------------------- */
 
