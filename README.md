@@ -4,9 +4,7 @@ Single-header C99 library for software-rendered plots. Zero dependencies beyond 
 
 Output is a raw pixel framebuffer — attach any backend (minifb, SDL, file, …).
 
-<p align="center">
-  <img src="examples/assets/showcase.png" alt="showcase" width="720">
-</p>
+<p align="center"><img src="examples/assets/showcase.png" width="700"></p>
 
 ## Quick Start
 
