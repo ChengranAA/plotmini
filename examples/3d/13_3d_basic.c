@@ -2,110 +2,152 @@
 #define PLOTMINI3D_IMPLEMENTATION
 #include "../../plotmini.h"
 #include "../../plotmini3d.h"
+#include "../dep/MiniFB.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 int main(void) {
-    const int win_w = 800;
-    const int win_h = 600;
+    const int win_w = 900;
+    const int win_h = 680;
+
+    struct mfb_window *win = mfb_open("plotmini3d — interactive viewer", win_w, win_h);
+    if (!win) {
+        fprintf(stderr, "Failed to open window\n");
+        return 1;
+    }
 
     unsigned char *pixels = (unsigned char *)malloc((size_t)win_w * win_h * 4);
     plm_fb fb = plm_fb_create(pixels, win_w, win_h, PLM_RGBA8);
 
-    /* ---- 1. surface (wireframe): z = sin(sqrt(x*x + y*y)) --------- */
-    int nx = 40, ny = 40;
+    /* ---- Build surface: sinc·gaussian + ripple ---- */
+    int nx = 50, ny = 50;
     float *surf_x = (float *)malloc((size_t)nx * sizeof(float));
     float *surf_y = (float *)malloc((size_t)ny * sizeof(float));
     float *surf_z = (float *)malloc((size_t)nx * ny * sizeof(float));
 
-    for (int i = 0; i < nx; i++) surf_x[i] = -8.0f + i * 16.0f / (nx - 1);
-    for (int j = 0; j < ny; j++) surf_y[j] = -8.0f + j * 16.0f / (ny - 1);
+    for (int i = 0; i < nx; i++) surf_x[i] = -4.0f + i * 8.0f / (nx - 1);
+    for (int j = 0; j < ny; j++) surf_y[j] = -4.0f + j * 8.0f / (ny - 1);
+
     for (int i = 0; i < nx; i++) {
         for (int j = 0; j < ny; j++) {
-            float r = sqrtf(surf_x[i] * surf_x[i] + surf_y[j] * surf_y[j]);
-            surf_z[i * ny + j] = r < 1e-4f ? 1.0f : sinf(r) / r * 3.0f;
+            float x = surf_x[i], y = surf_y[j];
+            float r = sqrtf(x * x + y * y);
+            float sinc = (r < 1e-4f) ? 1.0f : sinf(r * 2.5f) / (r * 2.5f);
+            float gauss = expf(-0.3f * (x * x + y * y));
+            float ripple = 0.15f * sinf(x * 2.0f) * cosf(y * 2.0f);
+            surf_z[i * ny + j] = 2.5f * sinc * gauss + ripple;
         }
     }
 
-    /* ---- 2. 3D line: spiral in 3D --------------------------------- */
-    int nline = 200;
+    /* ---- 3D spiral line ---- */
+    int nline = 300;
     float *lx = (float *)malloc((size_t)nline * sizeof(float));
     float *ly = (float *)malloc((size_t)nline * sizeof(float));
     float *lz = (float *)malloc((size_t)nline * sizeof(float));
     for (int i = 0; i < nline; i++) {
-        float t = (float)i / (nline - 1) * 4.0f * (float)M_PI;
-        lx[i] = 6.0f * cosf(t);
-        ly[i] = 6.0f * sinf(t);
-        lz[i] = t * 0.5f - 1.0f;
+        float t = (float)i / (nline - 1) * 5.0f * (float)M_PI;
+        float r = 3.0f + 1.5f * sinf(t * 0.7f);
+        lx[i] = r * cosf(t);
+        ly[i] = r * sinf(t);
+        lz[i] = t * 0.3f - 1.5f;
     }
 
-    /* ---- 3. scatter: random points in a cloud --------------------- */
-    int nscat = 60;
-    float *sx = (float *)malloc((size_t)nscat * sizeof(float));
-    float *sy = (float *)malloc((size_t)nscat * sizeof(float));
-    float *sz = (float *)malloc((size_t)nscat * sizeof(float));
-    for (int i = 0; i < nscat; i++) {
-        sx[i] = ((float)rand() / RAND_MAX - 0.5f) * 14.0f;
-        sy[i] = ((float)rand() / RAND_MAX - 0.5f) * 14.0f;
-        sz[i] = ((float)rand() / RAND_MAX) * 4.0f - 1.0f;
+    /* ---- View state ---- */
+    double azimuth   = -50.0;
+    double elevation =  25.0;
+    float  light     =  0.8f;
+
+    int needs_redraw = 1;
+
+    while (1) {
+        int state = mfb_update(win, fb.pixels);
+        if (state < 0) break;  /* window closed */
+
+        /* ---- Handle keyboard ---- */
+        const uint8_t *keys = mfb_get_key_buffer(win);
+        int changed = 0;
+
+        if (keys[MFB_KB_KEY_ESCAPE]) break;
+
+        if (keys[MFB_KB_KEY_LEFT])  { azimuth   -= 1.5; changed = 1; }
+        if (keys[MFB_KB_KEY_RIGHT]) { azimuth   += 1.5; changed = 1; }
+        if (keys[MFB_KB_KEY_UP])    { elevation += 1.0; changed = 1; }
+        if (keys[MFB_KB_KEY_DOWN])  { elevation -= 1.0; changed = 1; }
+
+        if (keys[MFB_KB_KEY_R]) { azimuth = -50.0; elevation = 25.0; changed = 1; }
+
+        if (keys[MFB_KB_KEY_L]) {
+            /* Toggle lighting on key-down edge (simple polling toggle) */
+            static int l_was_down = 0;
+            if (!l_was_down) {
+                light = (light > 0.5f) ? 0.0f : 0.8f;
+                changed = 1;
+            }
+            l_was_down = 1;
+        } else {
+            static int l_was_down = 0;
+            l_was_down = 0;
+            (void)l_was_down;
+        }
+
+        /* Clamp elevation */
+        if (elevation >  89.0) elevation =  89.0;
+        if (elevation < -89.0) elevation = -89.0;
+
+        if (changed) needs_redraw = 1;
+
+        if (!needs_redraw) {
+            mfb_wait_sync(win);
+            continue;
+        }
+
+        /* ---- Build plot ---- */
+        plm3d_plot p;
+        plm3d_plot_init(&p);
+
+        {
+            char title[128];
+            snprintf(title, sizeof(title),
+                     "az=%.0f  el=%.0f  light=%.1f  [arrows/R/L/ESC]",
+                     azimuth, elevation, (double)light);
+            p.title = title;
+        }
+        p.x_label = "X";
+        p.y_label = "Y";
+        p.z_label = "Z";
+
+        p.view.azimuth   = azimuth;
+        p.view.elevation = elevation;
+
+        /* Surface with colormap + lighting */
+        plm3d_plot_add_surface(&p, surf_x, surf_y, surf_z, nx, ny,
+            (plm3d_surface_style){PLM_GREY(180), 0.5f, PLM_CMAP_TURBO, light, NULL, 0});
+
+        /* Spiral line */
+        plm3d_plot_add_line(&p, lx, ly, lz, nline,
+            (plm3d_line_style){PLM_RED, 1.2f, NULL});
+
+        /* ---- Render ---- */
+        plm3d_render(&p, &fb);
+        plm_fb_swizzle_rgba_bgra(&fb);
+
+        plm3d_plot_reset(&p);
+        needs_redraw = 0;
+
+        mfb_wait_sync(win);
     }
 
-    /* ---- 4. depth-test verification points ------------------------ */
-    /* Points BELOW the surface (should be hidden): */
-    float hidden_x[4] = { 0.0f, 2.0f, 4.0f, 6.0f };
-    float hidden_y[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    float hidden_z[4] = { 2.5f, 0.864f, -1.068f, -0.640f };
+    mfb_close(win);
 
-    /* Points ABOVE the surface (should be visible): */
-    float visible_x[4] = { 0.0f, 2.0f, 4.0f, 6.0f };
-    float visible_y[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    float visible_z[4] = { 3.5f, 1.864f, -0.068f, 0.360f };
-
-    /* ---- build plot ----------------------------------------------- */
-    plm3d_plot p;
-    plm3d_plot_init(&p);
-    p.title   = "plotmini3d - surface colormap + wireframe + line + scatter";
-    p.x_label = "X";
-    p.y_label = "Y";
-    p.z_label = "Z";
-
-    p.view.azimuth   = -50.0;
-    p.view.elevation = 30.0;
-
-    plm3d_plot_add_surface(&p, surf_x, surf_y, surf_z, nx, ny,
-        (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS});
-
-    plm3d_plot_add_line(&p, lx, ly, lz, nline,
-        (plm3d_line_style){PLM_RED, 1.0f});
-
-    plm3d_plot_add_scatter(&p, sx, sy, sz, nscat,
-        (plm3d_scatter_style){PLM_BLUE, 3.5f});
-
-    /* Depth-test markers: large CYAN = should be HIDDEN (below surface) */
-    plm3d_plot_add_scatter(&p, hidden_x, hidden_y, hidden_z, 4,
-        (plm3d_scatter_style){PLM_CYAN, 8.0f});
-
-    /* Depth-test markers: large MAGENTA = should be VISIBLE (above surface) */
-    plm3d_plot_add_scatter(&p, visible_x, visible_y, visible_z, 4,
-        (plm3d_scatter_style){PLM_MAGENTA, 8.0f});
-
-    /* ---- render and save ------------------------------------------ */
-    plm3d_render(&p, &fb);
-    plm_fb_save_bmp(&fb, "plot3d_basic.bmp");
-    printf("Saved plot3d_basic.bmp\n");
-
-    /* ---- cleanup -------------------------------------------------- */
-    plm3d_plot_reset(&p);
     free(surf_x); free(surf_y); free(surf_z);
     free(lx); free(ly); free(lz);
-    free(sx); free(sy); free(sz);
     free(pixels);
-
     return 0;
 }

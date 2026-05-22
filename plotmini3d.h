@@ -46,15 +46,23 @@ extern "C" {
 /* ================================================================== */
 
 /* ---- camera / view -------------------------------------------------*/
+typedef enum plm3d_projection {
+    PLM3D_ORTHO = 0,
+    PLM3D_PERSPECTIVE = 1
+} plm3d_projection;
+
 typedef struct plm3d_view {
     double azimuth;    /* degrees, horizontal rotation (default -45)    */
     double elevation;  /* degrees, tilt above horizontal (default 25)  */
+    double distance;   /* camera distance for perspective; 0=ortho     */
+    plm3d_projection projection; /* PLM3D_ORTHO (default) or PLM3D_PERSPECTIVE */
 } plm3d_view;
 
 /* ---- 3D scatter ----------------------------------------------------*/
 typedef struct plm3d_scatter_style {
-    plm_color color;
-    float     radius;      /* pixel radius                             */
+    plm_color   color;
+    float       radius;      /* pixel radius                           */
+    const char *legend;      /* optional legend label                  */
 } plm3d_scatter_style;
 
 typedef struct plm3d_scatter_series {
@@ -67,8 +75,9 @@ typedef struct plm3d_scatter_series {
 
 /* ---- 3D line -------------------------------------------------------*/
 typedef struct plm3d_line_style {
-    plm_color color;
-    float     width;       /* pixel width (1.0 = hairline)             */
+    plm_color   color;
+    float       width;       /* pixel width (1.0 = hairline)           */
+    const char *legend;      /* optional legend label                  */
 } plm3d_line_style;
 
 typedef struct plm3d_line_series {
@@ -81,9 +90,12 @@ typedef struct plm3d_line_series {
 
 /* ---- surface (wireframe) -------------------------------------------*/
 typedef struct plm3d_surface_style {
-    plm_color line_color;
-    float     line_width;
-    plm_cmap  cmap;        /* colormap for surface fill; PLM_CMAP_NONE = solid fill derived from line_color */
+    plm_color   line_color;
+    float       line_width;
+    plm_cmap    cmap;        /* colormap for surface fill; PLM_CMAP_NONE = solid fill from line_color */
+    float       light;       /* 0 = flat fill, 1 = full Lambertian lighting from camera direction */
+    const char *legend;      /* optional legend label                  */
+    int         cull_backfaces; /* 0 = show both sides, 1 = skip backfaces */
 } plm3d_surface_style;
 
 typedef struct plm3d_surface_series {
@@ -117,6 +129,9 @@ typedef struct plm3d_plot {
     const char  *y_label;
     const char  *z_label;
 
+    /* legend */
+    plm_legend_pos  legend_position;  /* PLM_LEGEND_NONE = no legend */
+
     /* series (filled by plm3d_plot_add_*()) */
     plm3d_scatter_series *scatters;
     int                   scatter_count;
@@ -135,6 +150,18 @@ typedef struct plm3d_plot {
     int          fb_w;        /* framebuffer width at last render       */
     int          fb_h;        /* framebuffer height at last render      */
 } plm3d_plot;
+
+/* ---- mixed 2D/3D subplot figure -----------------------------------*/
+typedef struct plm3d_figure {
+    int          nrows;
+    int          ncols;
+    int          hgap;        /* horizontal gap between cells (pixels)   */
+    int          vgap;        /* vertical   gap between cells (pixels)   */
+    const char  *title;       /* overall figure title, drawn at top     */
+    plm_plot    *plots;       /* array[nrows*ncols], 2D plots, owned    */
+    plm3d_plot  *plots3d;     /* array[nrows*ncols], 3D plots, owned    */
+    int         *cell_types;  /* 0 = 2D, 1 = 3D; NULL = all 2D         */
+} plm3d_figure;
 
 /* ================================================================== */
 /*  PUBLIC API  (declarations)                                        */
@@ -156,6 +183,26 @@ void plm3d_plot_add_surface(plm3d_plot *p,
 /* Render the 3D plot into a framebuffer.  The framebuffer must already
    be created with plm_fb_create().                                     */
 void plm3d_render(plm3d_plot *p, plm_fb *fb);
+
+/* ---- mixed 2D/3D figure -------------------------------------------*/
+
+/* Initialise a figure with `nrows` x `ncols` grid.
+   Each cell starts as 2D; call plm3d_figure_plot_3d() to switch.      */
+void        plm3d_figure_init(plm3d_figure *fig, int nrows, int ncols);
+
+/* Return the 2D plot for cell (row, col).  Always available.           */
+plm_plot   *plm3d_figure_plot_2d(plm3d_figure *fig, int row, int col);
+
+/* Switch cell (row, col) to 3D mode and return its plm3d_plot.
+   Any 2D content in that cell is preserved but won't be rendered.      */
+plm3d_plot *plm3d_figure_plot_3d(plm3d_figure *fig, int row, int col);
+
+/* Render all subplots (2D and 3D) into one framebuffer.
+   Clears fb once, then renders each cell.  Margins stay within cells.  */
+void        plm3d_figure_render(const plm3d_figure *fig, plm_fb *fb);
+
+/* Free all internal storage; figure can be re-init'd or discarded.    */
+void        plm3d_figure_reset(plm3d_figure *fig);
 
 #ifdef __cplusplus
 }
@@ -179,23 +226,29 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb);
 #define PLM3D_ZFAR  (-1e30f)
 
 static float plm3d__maxf(float a, float b) { return a > b ? a : b; }
-static int   plm3d__maxi(int a, int b)   { return a > b ? a : b; }
 static float plm3d__absf(float a)        { return a < 0 ? -a : a; }
 
 /* ---- projection ---------------------------------------------------- */
 
 /* Project a normalised [-0.5, 0.5]^3 point to screen space.
    Returns pixel-space (rx, ry) and depth rz.
-   The caller then scales rx,ry to the actual plot area.                */
+   The caller then scales rx,ry to the actual plot area.
+   If dist > 0, perspective divide is applied (camera at distance dist). */
 static void plm3d__project(double cx, double cy, double cz,
                            double ca, double sa,
                            double ce, double se,
+                           double dist,
                            float *rx, float *ry, float *rz) {
     /* Standard orthographic: rotate around Z by azimuth,
        then tilt by elevation.  z=up in data space.                     */
     *rx = (float)( ca * cx + sa * cy);
     *ry = (float)(-sa * se * cx + ca * se * cy + ce * cz);
     *rz = (float)( sa * ce * cx - ca * ce * cy + se * cz);
+    if (dist > 0.0) {
+        double w = dist / (dist - *rz);
+        *rx = (float)(*rx * w);
+        *ry = (float)(*ry * w);
+    }
 }
 
 /* ---- depth-tested pixel ops ---------------------------------------- */
@@ -247,12 +300,13 @@ static void plm3d__line_z(plm_fb *fb, float *zbuf,
                           float x1, float y1, float z1,
                           plm_color c) {
     float dx = x1 - x0, dy = y1 - y0;
-    float steps = plm3d__maxf(plm3d__absf(dx), plm3d__absf(dy));
-    if (steps < 1.0f) steps = 1.0f;
-    float x_inc = dx / steps, y_inc = dy / steps, z_inc = (z1 - z0) / steps;
+    float span = plm3d__maxf(plm3d__absf(dx), plm3d__absf(dy));
+    int   steps = (int)ceilf(span);
+    if (steps < 1) steps = 1;
+    float x_inc = dx / (float)steps, y_inc = dy / (float)steps, z_inc = (z1 - z0) / (float)steps;
     float x = x0, y = y0, z = z0;
 
-    for (int i = 0; i <= (int)steps; i++) {
+    for (int i = 0; i <= steps; i++) {
         plm3d__set_pixel_z(fb, zbuf, (int)(x + 0.5f), (int)(y + 0.5f), z, c);
         x += x_inc; y += y_inc; z += z_inc;
     }
@@ -526,7 +580,7 @@ static void plm3d__draw_axes(plm3d_plot *p, plm_fb *fb, float *zbuf,
         double tcy = (corner & 2) ? 0.5 : -0.5;
         double tcz = (corner & 4) ? 0.5 : -0.5;
         float rx, ry, rz;
-        plm3d__project(tcx, tcy, tcz, ca, sa, ce, se, &rx, &ry, &rz);
+        plm3d__project(tcx, tcy, tcz, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
         if (rz < best_rz) { best_rz = rz; best_cx = corner & 1;
                             best_cy = (corner >> 1) & 1;
                             best_cz = (corner >> 2) & 1; }
@@ -559,8 +613,8 @@ static void plm3d__draw_axes(plm3d_plot *p, plm_fb *fb, float *zbuf,
         double enz = (ez - p->z_axis.min) / z_range - 0.5;
 
         float rx0, ry0, rz0, rx1, ry1, rz1;
-        plm3d__project(onx, ony, onz, ca, sa, ce, se, &rx0, &ry0, &rz0);
-        plm3d__project(enx, eny, enz, ca, sa, ce, se, &rx1, &ry1, &rz1);
+        plm3d__project(onx, ony, onz, ca, sa, ce, se, p->view.distance, &rx0, &ry0, &rz0);
+        plm3d__project(enx, eny, enz, ca, sa, ce, se, p->view.distance, &rx1, &ry1, &rz1);
 
         float px0 = (float)(plot_cx + rx0 * scale);
         float py0 = (float)(plot_cy - ry0 * scale);   /* Y flip */
@@ -589,7 +643,15 @@ static void plm3d__draw_axes(plm3d_plot *p, plm_fb *fb, float *zbuf,
         if (step <= 0.0) step = 1.0;
 
         double tick_start = ceil(lo / step) * step;
-        double tick_len   = range * 0.02;  /* 2% of axis range */
+
+        /* Tick direction in screen space (perpendicular to axis) */
+        float adx_s = px1 - px0, ady_s = py1 - py0;
+        float alen_s = sqrtf(adx_s * adx_s + ady_s * ady_s);
+        if (alen_s < 1.0f) alen_s = 1.0f;
+        float anx_s = adx_s / alen_s, any_s = ady_s / alen_s;
+        /* perpendicular: rotate 90 degrees clockwise in screen space */
+        float tnx_s = -any_s, tny_s = anx_s;
+        float tick_len_px = 6.0f;   /* tick length in screen pixels */
 
         for (double v = tick_start; v <= lo + range; v += step) {
             double tx, ty, tz;
@@ -597,29 +659,20 @@ static void plm3d__draw_axes(plm3d_plot *p, plm_fb *fb, float *zbuf,
             ty = (axis == 1) ? v : oy;
             tz = (axis == 2) ? v : oz;
 
-            /* Tick direction in data space: -Z for X/Y axes, -X for Z axis */
-            double tdx = (axis == 2) ? -tick_len : 0.0;
-            double tdy = 0.0;
-            double tdz = (axis == 2) ? 0.0 : -tick_len;
-
+            /* project tick base to screen */
             double tnx0 = (tx - p->x_axis.min) / x_range - 0.5;
             double tny0 = (ty - p->y_axis.min) / y_range - 0.5;
             double tnz0 = (tz - p->z_axis.min) / z_range - 0.5;
-
-            double tnx1 = ((tx + tdx) - p->x_axis.min) / x_range - 0.5;
-            double tny1 = ((ty + tdy) - p->y_axis.min) / y_range - 0.5;
-            double tnz1 = ((tz + tdz) - p->z_axis.min) / z_range - 0.5;
-
-            float trx0, try0, trz0, trx1, try1, trz1;
-            plm3d__project(tnx0, tny0, tnz0, ca, sa, ce, se, &trx0, &try0, &trz0);
-            plm3d__project(tnx1, tny1, tnz1, ca, sa, ce, se, &trx1, &try1, &trz1);
+            float trx0, try0, trz0;
+            plm3d__project(tnx0, tny0, tnz0, ca, sa, ce, se, p->view.distance, &trx0, &try0, &trz0);
 
             float tpx0 = (float)(plot_cx + trx0 * scale);
             float tpy0 = (float)(plot_cy - try0 * scale);
-            float tpx1 = (float)(plot_cx + trx1 * scale);
-            float tpy1 = (float)(plot_cy - try1 * scale);
+            /* tick tip = base + perpendicular * pixel_length */
+            float tpx1 = tpx0 + tnx_s * tick_len_px;
+            float tpy1 = tpy0 + tny_s * tick_len_px;
 
-            plm3d__line_z(fb, zbuf, tpx0, tpy0, trz0, tpx1, tpy1, trz1,
+            plm3d__line_z(fb, zbuf, tpx0, tpy0, trz0, tpx1, tpy1, trz0,
                           axis_colors[axis]);
         }
     }
@@ -641,7 +694,7 @@ static void plm3d__render_scatters(plm3d_plot *p, plm_fb *fb, float *zbuf,
             double nz = (ss->z_data[i] - p->z_axis.min) / z_range - 0.5;
 
             float rx, ry, rz;
-            plm3d__project(nx, ny, nz, ca, sa, ce, se, &rx, &ry, &rz);
+            plm3d__project(nx, ny, nz, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
 
             float px = (float)(plot_cx + rx * scale);
             float py = (float)(plot_cy - ry * scale);
@@ -665,7 +718,7 @@ static void plm3d__render_lines(plm3d_plot *p, plm_fb *fb, float *zbuf,
         double ny0 = (ls->y_data[0] - p->y_axis.min) / y_range - 0.5;
         double nz0 = (ls->z_data[0] - p->z_axis.min) / z_range - 0.5;
         float rx0, ry0, rz0;
-        plm3d__project(nx0, ny0, nz0, ca, sa, ce, se, &rx0, &ry0, &rz0);
+        plm3d__project(nx0, ny0, nz0, ca, sa, ce, se, p->view.distance, &rx0, &ry0, &rz0);
         float px0 = (float)(plot_cx + rx0 * scale);
         float py0 = (float)(plot_cy - ry0 * scale);
 
@@ -674,7 +727,7 @@ static void plm3d__render_lines(plm3d_plot *p, plm_fb *fb, float *zbuf,
             double ny1 = (ls->y_data[i] - p->y_axis.min) / y_range - 0.5;
             double nz1 = (ls->z_data[i] - p->z_axis.min) / z_range - 0.5;
             float rx1, ry1, rz1;
-            plm3d__project(nx1, ny1, nz1, ca, sa, ce, se, &rx1, &ry1, &rz1);
+            plm3d__project(nx1, ny1, nz1, ca, sa, ce, se, p->view.distance, &rx1, &ry1, &rz1);
             float px1 = (float)(plot_cx + rx1 * scale);
             float py1 = (float)(plot_cy - ry1 * scale);
 
@@ -718,7 +771,7 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
                 double nzv = (ss->z_data[idx] - p->z_axis.min) / z_range - 0.5;
 
                 float rx, ry, rz;
-                plm3d__project(nxv, nyv, nzv, ca, sa, ce, se, &rx, &ry, &rz);
+                plm3d__project(nxv, nyv, nzv, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
                 px[idx] = (float)(plot_cx + rx * scale);
                 py[idx] = (float)(plot_cy - ry * scale);
                 pz[idx] = rz;
@@ -728,6 +781,7 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
         /* ---- fill quads for proper occlusion (z-buffer) ---- */
         {
             int use_cmap = (ss->style.cmap != PLM_CMAP_NONE);
+            float lighting = ss->style.light;
             plm_color solid_fill_c;
             if (!use_cmap) {
                 int fr = ss->style.line_color.r + (255 - ss->style.line_color.r) * 2 / 3;
@@ -739,12 +793,23 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
             double z_data_min = p->z_axis.min;
             double z_data_range = z_range;
 
+            /* light direction = unit vector from scene toward camera */
+            float lx = (float)(sa * ce);
+            float ly = (float)(-ca * ce);
+            float lz = (float)se;
+
             for (int i = 0; i < nx - 1; i++) {
                 for (int j = 0; j < ny - 1; j++) {
                     int i00 = i * ny + j;
                     int i10 = (i + 1) * ny + j;
                     int i11 = (i + 1) * ny + (j + 1);
                     int i01 = i * ny + (j + 1);
+
+                    /* skip quads that cross into NaN (excluded) regions */
+                    if (plm__isnan(ss->z_data[i00]) || plm__isnan(ss->z_data[i10]) ||
+                        plm__isnan(ss->z_data[i11]) || plm__isnan(ss->z_data[i01]))
+                        continue;
+
                     float qx[4] = { px[i00], px[i10], px[i11], px[i01] };
                     float qy[4] = { py[i00], py[i10], py[i11], py[i01] };
                     float qz[4] = { pz[i00], pz[i10], pz[i11], pz[i01] };
@@ -762,34 +827,87 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
                     } else {
                         fill_c = solid_fill_c;
                     }
+
+                    /* compute face normal (always, for backface culling + lighting) */
+                    {
+                        float dx = ss->x_data[i + 1] - ss->x_data[i];
+                        float dy = ss->y_data[j + 1] - ss->y_data[j];
+                        float dzx = ss->z_data[i10] - ss->z_data[i00];
+                        float dzy = ss->z_data[i01] - ss->z_data[i00];
+                        float nx = -dzx * dy;
+                        float ny = -dx * dzy;
+                        float nz = dx * dy;
+                        float nlen = sqrtf(nx * nx + ny * ny + nz * nz);
+                        if (nlen > 1e-12f) {
+                            nlen = 1.0f / nlen;
+                            nx *= nlen; ny *= nlen; nz *= nlen;
+                        }
+
+                        /* backface culling: skip if normal faces away from camera */
+                        if (ss->style.cull_backfaces) {
+                            float view_dot = nx * lx + ny * ly + nz * lz;
+                            if (view_dot <= 0.0f) continue;
+                        }
+
+                        /* Lambertian lighting */
+                        if (lighting > 0.0f) {
+                            float diffuse = nx * lx + ny * ly + nz * lz;
+                            if (diffuse < 0.0f) diffuse = 0.0f;
+                            /* 25% ambient, 75% diffuse */
+                            float lit = 0.25f + 0.75f * diffuse;
+                            float factor = 1.0f - lighting + lighting * lit;
+                            fill_c.r = (unsigned char)(fill_c.r * factor);
+                            fill_c.g = (unsigned char)(fill_c.g * factor);
+                            fill_c.b = (unsigned char)(fill_c.b * factor);
+                        }
+                    }
+
                     plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, fill_c);
                 }
             }
         }
 
-        /* Draw horizontal lines (constant y, varying x) */
-        for (int j = 0; j < ny; j++) {
-            for (int i = 0; i < nx - 1; i++) {
-                int idx0 = i * ny + j;
-                int idx1 = (i + 1) * ny + j;
-                plm3d__thick_line_z(fb, zbuf,
-                                    px[idx0], py[idx0], pz[idx0],
-                                    px[idx1], py[idx1], pz[idx1],
-                                    ss->style.line_width,
-                                    ss->style.line_color);
+        /* ---- wireframe overlay (with depth bias to avoid z-fighting) ---- */
+        {
+            /* Compute a small depth bias from the projected Z range so the
+               wireframe sits slightly in front of the filled quads.        */
+            float pz_min = pz[0], pz_max = pz[0];
+            for (int k = 1; k < nx * ny; k++) {
+                if (pz[k] < pz_min) pz_min = pz[k];
+                if (pz[k] > pz_max) pz_max = pz[k];
             }
-        }
+            float z_range_proj = pz_max - pz_min;
+            if (z_range_proj < 1e-12f) z_range_proj = 1.0f;
+            float bias = z_range_proj * 2e-4f;
 
-        /* Draw vertical lines (constant x, varying y) */
-        for (int i = 0; i < nx; i++) {
-            for (int j = 0; j < ny - 1; j++) {
-                int idx0 = i * ny + j;
-                int idx1 = i * ny + (j + 1);
-                plm3d__thick_line_z(fb, zbuf,
-                                    px[idx0], py[idx0], pz[idx0],
-                                    px[idx1], py[idx1], pz[idx1],
-                                    ss->style.line_width,
-                                    ss->style.line_color);
+            /* Draw horizontal lines (constant y, varying x) */
+            for (int j = 0; j < ny; j++) {
+                for (int i = 0; i < nx - 1; i++) {
+                    int idx0 = i * ny + j;
+                    int idx1 = (i + 1) * ny + j;
+                    if (plm__isnan(ss->z_data[idx0]) || plm__isnan(ss->z_data[idx1]))
+                        continue;
+                    plm3d__thick_line_z(fb, zbuf,
+                                        px[idx0], py[idx0], pz[idx0] + bias,
+                                        px[idx1], py[idx1], pz[idx1] + bias,
+                                        ss->style.line_width,
+                                        ss->style.line_color);
+                }
+            }
+
+            /* Draw vertical lines (constant x, varying y) */
+            for (int i = 0; i < nx; i++) {
+                for (int j = 0; j < ny - 1; j++) {
+                    int idx0 = i * ny + j;
+                    int idx1 = i * ny + (j + 1);
+                    if (plm__isnan(ss->z_data[idx0]) || plm__isnan(ss->z_data[idx1]))
+                        continue;
+                    plm3d__thick_line_z(fb, zbuf,
+                                        px[idx0], py[idx0], pz[idx0] + bias,
+                                        px[idx1], py[idx1], pz[idx1] + bias,
+                                        ss->style.line_width,
+                                        ss->style.line_color);
+                }
             }
         }
 
@@ -798,10 +916,12 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
 }
 
 /* ------------------------------------------------------------------ */
-/*  main render                                                       */
+/*  render into a cell                                                 */
 /* ------------------------------------------------------------------ */
 
-void plm3d_render(plm3d_plot *p, plm_fb *fb) {
+static void plm3d__render_plot_into(plm3d_plot *p, plm_fb *fb,
+                                     int cell_x0, int cell_y0,
+                                     int cell_x1, int cell_y1) {
     const int S = PLOTMINI_TEXT_SCALE;
 
     /* ---- 1. auto-range axes ---- */
@@ -827,19 +947,47 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
     int mr = p->margin_right  >= 0 ? p->margin_right  : 20 * S;
     int mb = p->margin_bottom >= 0 ? p->margin_bottom : 40 * S;
 
-    /* Title */
-    int title_h = 0;
-    if (p->title && p->title[0]) {
-        int th = plm_text_height();
-        title_h = th + 6 * S;
-        mt = plm3d__maxi(mt, title_h);
+    /* expand margins so axis / tick labels fit.  The top margin is
+       split into two zones: an upper title-zone and a lower zone
+       (side_pad) for axis-label protrusion above the plot area.   */
+    int side_pad;
+    {
+        int th       = plm_text_height();
+        int gap      = 4 * S;
+        int name_pad = 48 * S + th + gap;       /* axis-name outward  */
+        int tick_pad = 18 * S + 6 * S + th;     /* tick-label outward */
+        side_pad = name_pad > tick_pad ? name_pad : tick_pad;
+
+        /* top: title-zone (above axis labels) + label protrusion     */
+        int need_mt = side_pad;
+        if (p->title && p->title[0])
+            need_mt += th + gap;                /* title text + gap   */
+        if (need_mt > mt) mt = need_mt;
+
+        if (side_pad > mb) mb = side_pad;
+        if (side_pad > ml) ml = side_pad;
+        if (side_pad > mr) mr = side_pad;
     }
 
-    /* ---- 3. compute plot_area ---- */
-    p->plot_area.x0 = ml;
-    p->plot_area.y0 = mt;
-    p->plot_area.x1 = fb->width  - mr;
-    p->plot_area.y1 = fb->height - mb;
+    /* ---- 3. compute plot_area within the cell ---- */
+    /* clamp margins: never let them consume more than 45% of the cell
+       per side, so the plot always has at least 10% of the cell even
+       at large PLOTMINI_TEXT_SCALE values.                            */
+    {
+        int cell_w = cell_x1 - cell_x0;
+        int cell_h = cell_y1 - cell_y0;
+        int max_h_margin = cell_w * 9 / 20;  /* 45% of width  */
+        int max_v_margin = cell_h * 9 / 20;  /* 45% of height */
+        if (ml > max_h_margin) ml = max_h_margin;
+        if (mr > max_h_margin) mr = max_h_margin;
+        if (mt > max_v_margin) mt = max_v_margin;
+        if (mb > max_v_margin) mb = max_v_margin;
+    }
+
+    p->plot_area.x0 = cell_x0 + ml;
+    p->plot_area.y0 = cell_y0 + mt;
+    p->plot_area.x1 = cell_x1 - mr;
+    p->plot_area.y1 = cell_y1 - mb;
     p->fb_w = fb->width;
     p->fb_h = fb->height;
 
@@ -851,8 +999,9 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
     double plot_cx = (p->plot_area.x0 + p->plot_area.x1) * 0.5;
     double plot_cy = (p->plot_area.y0 + p->plot_area.y1) * 0.5;
 
-    /* ---- 4. clear framebuffer ---- */
-    plm_fb_clear(fb, PLM_BG_COLOR);
+    /* ---- 4. clear cell area ---- */
+    { plm_irect cr = { cell_x0, cell_y0, cell_x1, cell_y1 };
+      plm_fb_fill_rect(fb, cr, PLM_BG_COLOR); }
 
     /* ---- 5. allocate and clear z-buffer ---- */
     int npixels = fb->width * fb->height;
@@ -882,7 +1031,7 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
         double cy = (corner & 2) ? 0.5 : -0.5;
         double cz = (corner & 4) ? 0.5 : -0.5;
         float rx, ry, rz;
-        plm3d__project(cx, cy, cz, ca, sa, ce, se, &rx, &ry, &rz);
+        plm3d__project(cx, cy, cz, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
         if (rx < rx_min) rx_min = rx;
         if (rx > rx_max) rx_max = rx;
         if (ry < ry_min) ry_min = ry;
@@ -899,12 +1048,18 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
     double scale_y = (pa_h * 0.85) / proj_h;
     double scale = (scale_x < scale_y) ? scale_x : scale_y;
 
-    /* ---- 7. draw title ---- */
+    /* ---- 7. draw title (centered in the upper title-zone of the
+               top margin, above the axis-label protrusion zone)  ---- */
     if (p->title && p->title[0]) {
         int tw = plm_text_width(p->title);
         int tx = (int)(plot_cx - tw * 0.5);
-        int ty = p->plot_area.y0 - plm_text_height() - 2 * S;
-        if (ty < 0) ty = 2;
+        int th = plm_text_height();
+        int title_zone_h = mt - side_pad;   /* upper part of margin */
+        int ty = cell_y0 + title_zone_h / 2 + th / 2;
+        /* clamp to stay inside the cell / framebuffer */
+        if (tx < cell_x0) tx = cell_x0;
+        if (tx + tw > cell_x1) tx = cell_x1 - tw;
+        if (tx < 0) tx = 0;
         plm_draw_text(fb, tx, ty, p->title, PLM_FG_COLOR);
     }
 
@@ -941,7 +1096,7 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
             double tcy = (corner & 2) ? 0.5 : -0.5;
             double tcz = (corner & 4) ? 0.5 : -0.5;
             float rx, ry, rz;
-            plm3d__project(tcx, tcy, tcz, ca, sa, ce, se, &rx, &ry, &rz);
+            plm3d__project(tcx, tcy, tcz, ca, sa, ce, se, p->view.distance, &rx, &ry, &rz);
             if (rz < best_rz2) { best_rz2 = rz; bcx = corner & 1;
                                  bcy = (corner >> 1) & 1;
                                  bcz = (corner >> 2) & 1; }
@@ -971,7 +1126,7 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
             double eny = (ey - p->y_axis.min) / y_range - 0.5;
             double enz = (ez - p->z_axis.min) / z_range - 0.5;
             float erx, ery_, erz;
-            plm3d__project((float)enx, (float)eny, (float)enz, ca, sa, ce, se, &erx, &ery_, &erz);
+            plm3d__project((float)enx, (float)eny, (float)enz, ca, sa, ce, se, p->view.distance, &erx, &ery_, &erz);
             float epx = (float)(plot_cx + erx * scale);
             float epy = (float)(plot_cy - ery_ * scale);
 
@@ -980,7 +1135,7 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
             double ony = (oy - p->y_axis.min) / y_range - 0.5;
             double onz = (oz - p->z_axis.min) / z_range - 0.5;
             float orx, ory_, orz;
-            plm3d__project((float)onx, (float)ony, (float)onz, ca, sa, ce, se, &orx, &ory_, &orz);
+            plm3d__project((float)onx, (float)ony, (float)onz, ca, sa, ce, se, p->view.distance, &orx, &ory_, &orz);
             float opx = (float)(plot_cx + orx * scale);
             float opy = (float)(plot_cy - ory_ * scale);
 
@@ -990,14 +1145,11 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
             if (alen < 1.0f) alen = 1.0f;
             float ax_nx = adx / alen, ax_ny = ady / alen;
 
-            /* tick-mark direction in data space (matches plm3d__draw_axes):
-               X,Y axes: tick in -Z;  Z axis: tick in -X                     */
+            /* tick direction: perpendicular to axis in screen space */
             double range = (axis == 0) ? x_range :
                            (axis == 1) ? y_range : z_range;
             double lo    = (axis == 0) ? p->x_axis.min :
                            (axis == 1) ? p->y_axis.min : p->z_axis.min;
-
-            double tick_len_data = range * 0.02;  /* matches draw_axes */
 
             double rough = range / 5.0;
             double exp_ = pow(10.0, floor(log10(rough)));
@@ -1011,45 +1163,29 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
             if (step <= 0.0) step = 1.0;
 
             double tick_start = ceil(lo / step) * step;
-            double label_pad  = 12.0 * S;  /* pixel offset from tick tip */
+            double label_pad  = 18.0 * S;  /* pixel offset from tick tip */
+            float tick_len_px = 6.0f;      /* matches plm3d__draw_axes  */
 
             for (double v = tick_start; v <= lo + range; v += step) {
                 double tx = (axis == 0) ? v : ox;
                 double ty = (axis == 1) ? v : oy;
                 double tz = (axis == 2) ? v : oz;
 
-                /* tick base and tip in data space */
-                double tdx_d = (axis == 2) ? -tick_len_data : 0.0;
-                double tdy_d = 0.0;
-                double tdz_d = (axis == 2) ? 0.0 : -tick_len_data;
-
-                /* project base */
+                /* project tick base to screen */
                 double tnx = (tx - p->x_axis.min) / x_range - 0.5;
                 double tny = (ty - p->y_axis.min) / y_range - 0.5;
                 double tnz = (tz - p->z_axis.min) / z_range - 0.5;
                 float bpx, bpy, bpz;
                 plm3d__project((float)tnx, (float)tny, (float)tnz,
-                               ca, sa, ce, se, &bpx, &bpy, &bpz);
+                               ca, sa, ce, se, p->view.distance, &bpx, &bpy, &bpz);
 
-                /* project tip */
-                double tnx2 = ((tx + tdx_d) - p->x_axis.min) / x_range - 0.5;
-                double tny2 = ((ty + tdy_d) - p->y_axis.min) / y_range - 0.5;
-                double tnz2 = ((tz + tdz_d) - p->z_axis.min) / z_range - 0.5;
-                float tpx2, tpy2, tpz2;
-                plm3d__project((float)tnx2, (float)tny2, (float)tnz2,
-                               ca, sa, ce, se, &tpx2, &tpy2, &tpz2);
-
-                /* screen-space tick base and tip */
                 float sbx = (float)(plot_cx + bpx * scale);
                 float sby = (float)(plot_cy - bpy * scale);
-                float stx = (float)(plot_cx + tpx2 * scale);
-                float sty = (float)(plot_cy - tpy2 * scale);
 
-                /* tick direction in screen space */
-                float tdx_s = stx - sbx, tdy_s = sty - sby;
-                float tlen_s = sqrtf(tdx_s * tdx_s + tdy_s * tdy_s);
-                if (tlen_s < 1.0f) { tdx_s = -ax_ny; tdy_s = ax_nx; tlen_s = 1.0f; }
-                float tnx_s = tdx_s / tlen_s, tny_s = tdy_s / tlen_s;
+                /* tick tip = base + screen-perpendicular (matches draw_axes) */
+                float tnx_s = -ax_ny, tny_s = ax_nx;  /* perpendicular to axis */
+                float stx = sbx + tnx_s * tick_len_px;
+                float sty = sby + tny_s * tick_len_px;
 
                 /* label at tick tip + padding outward */
                 float llx = stx + tnx_s * label_pad;
@@ -1066,7 +1202,7 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
 
             /* ---- axis name label at endpoint (further out) ---- */
             {
-                float nm_off = 28.0f * S;
+                float nm_off = 48.0f * S;
                 float nlx = epx + ax_nx * nm_off;
                 float nly = epy + ax_ny * nm_off;
 
@@ -1079,8 +1215,105 @@ void plm3d_render(plm3d_plot *p, plm_fb *fb) {
         }
     }
 
-    /* ---- 11. cleanup ---- */
+    /* ---- 11. draw legend (no depth test) ---- */
+    if (p->legend_position != PLM_LEGEND_NONE) {
+        struct { const char *label; plm_color color; int is_line; int is_marker; int is_patch; } entries[64];
+        int entry_count = 0;
+        int si;
+        for (si = 0; si < p->line_count && entry_count < 64; si++) {
+            if (p->lines[si].style.legend) {
+                entries[entry_count].label = p->lines[si].style.legend;
+                entries[entry_count].color = p->lines[si].style.color;
+                entries[entry_count].is_line = 1;
+                entries[entry_count].is_marker = 0;
+                entries[entry_count].is_patch = 0;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->scatter_count && entry_count < 64; si++) {
+            if (p->scatters[si].style.legend) {
+                entries[entry_count].label = p->scatters[si].style.legend;
+                entries[entry_count].color = p->scatters[si].style.color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 1;
+                entries[entry_count].is_patch = 0;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->surface_count && entry_count < 64; si++) {
+            if (p->surfaces[si].style.legend) {
+                entries[entry_count].label = p->surfaces[si].style.legend;
+                entries[entry_count].color = p->surfaces[si].style.line_color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 0;
+                entries[entry_count].is_patch = 1;
+                entry_count++;
+            }
+        }
+        if (entry_count > 0) {
+            int max_label_w = 0, i;
+            for (i = 0; i < entry_count; i++) {
+                int w = plm_text_width(entries[i].label);
+                if (w > max_label_w) max_label_w = w;
+            }
+            int sample_w = 14 * S;
+            int entry_h = (PLM_FONT_H + 2) * S;
+            int pad = 6 * S;
+            int box_w = pad + sample_w + 4 * S + max_label_w + pad;
+            int box_h = pad + entry_count * entry_h + pad;
+            int box_x, box_y;
+            int pa_x0 = p->plot_area.x0, pa_y0 = p->plot_area.y0;
+            int pa_x1 = p->plot_area.x1, pa_y1 = p->plot_area.y1;
+            switch (p->legend_position) {
+                case PLM_LEGEND_TOP_RIGHT:
+                    box_x = pa_x1 - box_w - 4; box_y = pa_y0 + 4; break;
+                case PLM_LEGEND_TOP_LEFT:
+                    box_x = pa_x0 + 4; box_y = pa_y0 + 4; break;
+                case PLM_LEGEND_BOTTOM_RIGHT:
+                    box_x = pa_x1 - box_w - 4; box_y = pa_y1 - box_h - 4; break;
+                case PLM_LEGEND_BOTTOM_LEFT:
+                    box_x = pa_x0 + 4; box_y = pa_y1 - box_h - 4; break;
+                case PLM_LEGEND_OUTSIDE_RIGHT:
+                    box_x = pa_x1 + 4; box_y = pa_y0 + 4; break;
+                default: box_x = pa_x1 - box_w - 4; box_y = pa_y0 + 4; break;
+            }
+            { plm_irect bg_r = { box_x, box_y, box_x + box_w, box_y + box_h };
+              plm_fb_fill_rect(fb, bg_r, PLM_BG_COLOR);
+              { int x; for (x = bg_r.x0; x < bg_r.x1; x++) {
+                  plm__set_pixel(fb, x, bg_r.y0, PLM_FG_COLOR);
+                  plm__set_pixel(fb, x, bg_r.y1 - 1, PLM_FG_COLOR); }
+                int y; for (y = bg_r.y0; y < bg_r.y1; y++) {
+                  plm__set_pixel(fb, bg_r.x0, y, PLM_FG_COLOR);
+                  plm__set_pixel(fb, bg_r.x1 - 1, y, PLM_FG_COLOR); } } }
+            for (i = 0; i < entry_count; i++) {
+                int ey = box_y + pad + i * entry_h;
+                int sx = box_x + pad;
+                int sy = ey + entry_h / 2;
+                if (entries[i].is_line) {
+                    plm__wu_line_thick(fb, (float)sx, (float)sy,
+                        (float)(sx + sample_w), (float)sy, entries[i].color, 2.0f, 0, 0);
+                } else if (entries[i].is_marker) {
+                    plm__fill_circle(fb, sx + sample_w / 2, sy, 3.0f, entries[i].color);
+                } else {
+                    plm_irect r = { sx, sy - 3*S, sx + sample_w, sy + 3*S };
+                    plm_fb_fill_rect(fb, r, entries[i].color);
+                }
+                plm_draw_text(fb, sx + sample_w + 4 * S,
+                    ey + PLM_FONT_H * S, entries[i].label, PLM_FG_COLOR);
+            }
+        }
+    }
+
+    /* ---- 12. cleanup ---- */
     free(zbuf);
+}
+
+/* ------------------------------------------------------------------ */
+/*  public render                                                     */
+/* ------------------------------------------------------------------ */
+
+void plm3d_render(plm3d_plot *p, plm_fb *fb) {
+    plm3d__render_plot_into(p, fb, 0, 0, fb->width, fb->height);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1151,6 +1384,115 @@ void plm3d_plot_add_surface(plm3d_plot *p,
     ss->x_data = x; ss->y_data = y; ss->z_data = z;
     ss->nx = nx; ss->ny = ny;
     ss->style = style;
+}
+
+/* ------------------------------------------------------------------ */
+/*  mixed 2D/3D figure                                                */
+/* ------------------------------------------------------------------ */
+
+void plm3d_figure_init(plm3d_figure *fig, int nrows, int ncols) {
+    int i, total;
+    const int S = PLOTMINI_TEXT_SCALE;
+    memset(fig, 0, sizeof(*fig));
+    fig->nrows = nrows < 1 ? 1 : nrows;
+    fig->ncols = ncols < 1 ? 1 : ncols;
+    fig->hgap  = 20 * S;
+    fig->vgap  = 20 * S;
+    total = fig->nrows * fig->ncols;
+    fig->plots = (plm_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm_plot));
+    fig->plots3d = (plm3d_plot *)PLOTMINI_MALLOC((size_t)total * sizeof(plm3d_plot));
+    fig->cell_types = (int *)PLOTMINI_MALLOC((size_t)total * sizeof(int));
+    for (i = 0; i < total; i++) {
+        plm_plot_init(&fig->plots[i]);
+        fig->plots[i].margin_left   = 55 * S;
+        fig->plots[i].margin_top    = 30 * S;
+        fig->plots[i].margin_right  = 20 * S;
+        fig->plots[i].margin_bottom = 38 * S;
+        plm3d_plot_init(&fig->plots3d[i]);
+        fig->plots3d[i].margin_left   = 40 * S;
+        fig->plots3d[i].margin_top    = 30 * S;
+        fig->plots3d[i].margin_right  = 20 * S;
+        fig->plots3d[i].margin_bottom = 40 * S;
+        fig->cell_types[i] = 0;  /* 2D by default */
+    }
+}
+
+plm_plot *plm3d_figure_plot_2d(plm3d_figure *fig, int row, int col) {
+    if (!fig || !fig->plots) return NULL;
+    if (row < 0 || row >= fig->nrows || col < 0 || col >= fig->ncols)
+        return NULL;
+    return &fig->plots[row * fig->ncols + col];
+}
+
+plm3d_plot *plm3d_figure_plot_3d(plm3d_figure *fig, int row, int col) {
+    if (!fig || !fig->plots3d) return NULL;
+    if (row < 0 || row >= fig->nrows || col < 0 || col >= fig->ncols)
+        return NULL;
+    int idx = row * fig->ncols + col;
+    fig->cell_types[idx] = 1;  /* mark as 3D */
+    return &fig->plots3d[idx];
+}
+
+void plm3d_figure_render(const plm3d_figure *fig, plm_fb *fb) {
+    int r, c, cell_w, cell_h;
+
+    if (!fig || !fig->plots || fig->nrows < 1 || fig->ncols < 1) return;
+
+    /* 1. clear entire framebuffer once */
+    plm_fb_clear(fb, PLM_BG_COLOR);
+
+    /* 1b. draw overall figure title (centered in top padding).
+          Expand top padding if needed to fit the title.            */
+    int pad_x = fig->hgap;
+    int pad_y = fig->vgap;
+    if (fig->title && fig->title[0]) {
+        int th = plm_text_height();
+        int min_pad = th + 8 * PLOTMINI_TEXT_SCALE;  /* title + breathing room */
+        if (pad_y < min_pad) pad_y = min_pad;
+        int tw = plm_text_width(fig->title);
+        int tx = (fb->width - tw) / 2;
+        int ty = pad_y / 2 + th / 2;
+        plm_draw_text(fb, tx, ty, fig->title, PLM_FG_COLOR);
+    }
+    cell_w = (fb->width  - 2 * pad_x - (fig->ncols - 1) * fig->hgap) / fig->ncols;
+    cell_h = (fb->height - 2 * pad_y - (fig->nrows - 1) * fig->vgap) / fig->nrows;
+    if (cell_w < 40) cell_w = 40;
+    if (cell_h < 40) cell_h = 40;
+
+    /* 3. render each cell */
+    for (r = 0; r < fig->nrows; r++) {
+        for (c = 0; c < fig->ncols; c++) {
+            int cell_x0 = pad_x + c * (cell_w + fig->hgap);
+            int cell_y0 = pad_y + r * (cell_h + fig->vgap);
+            int cell_x1 = cell_x0 + cell_w;
+            int cell_y1 = cell_y0 + cell_h;
+            int idx = r * fig->ncols + c;
+
+            if (fig->cell_types && fig->cell_types[idx] == 1) {
+                /* 3D cell */
+                plm3d_plot *p3 = (plm3d_plot *)&fig->plots3d[idx];
+                plm3d__render_plot_into(p3, fb, cell_x0, cell_y0, cell_x1, cell_y1);
+            } else {
+                /* 2D cell */
+                plm_plot *p2 = (plm_plot *)&fig->plots[idx];
+                plm__render_plot_into(p2, fb, cell_x0, cell_y0, cell_x1, cell_y1);
+            }
+        }
+    }
+}
+
+void plm3d_figure_reset(plm3d_figure *fig) {
+    int i, total;
+    if (!fig || !fig->plots) return;
+    total = fig->nrows * fig->ncols;
+    for (i = 0; i < total; i++) {
+        plm_plot_reset(&fig->plots[i]);
+        plm3d_plot_reset(&fig->plots3d[i]);
+    }
+    PLOTMINI_FREE(fig->plots);
+    PLOTMINI_FREE(fig->plots3d);
+    PLOTMINI_FREE(fig->cell_types);
+    memset(fig, 0, sizeof(*fig));
 }
 
 #endif /* PLOTMINI3D_IMPLEMENTATION */

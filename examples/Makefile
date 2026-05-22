@@ -20,12 +20,12 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # ---- 2D examples (link with MiniFB) ---------------------------------
-$(BINS_2D): $(BUILD_DIR)/%: 2d/%.c 2d/dep/libminifb.a | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< 2d/dep/libminifb.a $(LDFLAGS)
+$(BINS_2D): $(BUILD_DIR)/%: 2d/%.c dep/libminifb.a | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< dep/libminifb.a $(LDFLAGS)
 
-# ---- 3D examples (no MiniFB dependency) -----------------------------
-$(BINS_3D): $(BUILD_DIR)/%: 3d/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+# ---- 3D examples (link with MiniFB) ---------------------------------
+$(BINS_3D): $(BUILD_DIR)/%: 3d/%.c dep/libminifb.a | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idep -o $@ $< dep/libminifb.a $(LDFLAGS)
 
 # ---- clean ----------------------------------------------------------
 clean:

@@ -2,7 +2,7 @@
 #define PLOTMINI_DARK_THEME
 #define PLOTMINI_IMPLEMENTATION
 #include "../../plotmini.h"
-#include "dep/MiniFB.h"
+#include "../dep/MiniFB.h"
 
 #include <math.h>
 #include <stdio.h>
