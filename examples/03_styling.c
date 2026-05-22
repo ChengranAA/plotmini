@@ -36,6 +36,7 @@ int main(void) {
 
     plot.x_axis.grid = 1;
     plot.y_axis.grid = 2;
+    plot.legend_position = PLM_LEGEND_TOP_RIGHT;
 
     {
         const int n = 400;
@@ -72,6 +73,34 @@ int main(void) {
             y[i] = 1.0f - (float)i * 0.01f + 0.2f * cosf((float)i * 0.3f);
         }
         plm_line_style s = { PLM_GREEN, 5.0f, "decay", 0, 0};
+        plm_plot_add_line(&plot, x, y, n, s);
+        free(x); free(y);
+    }
+
+    /* dashed line: 8 px on, 8 px off */
+    {
+        const int n = 400;
+        float *x = (float *)malloc((size_t)n * sizeof(float));
+        float *y = (float *)malloc((size_t)n * sizeof(float));
+        for (int i = 0; i < n; i++) {
+            x[i] = (float)i * 0.05f;
+            y[i] = cosf(x[i]) * 1.2f - 0.5f;
+        }
+        plm_line_style s = { PLM_BLUE, 2.0f, "dashed cos", 0, PLM_DASH_DASHED };
+        plm_plot_add_line(&plot, x, y, n, s);
+        free(x); free(y);
+    }
+
+    /* dotted line: 1 px on, 1 px off */
+    {
+        const int n = 400;
+        float *x = (float *)malloc((size_t)n * sizeof(float));
+        float *y = (float *)malloc((size_t)n * sizeof(float));
+        for (int i = 0; i < n; i++) {
+            x[i] = (float)i * 0.05f;
+            y[i] = sinf(x[i] * 2.5f) * 0.6f - 1.0f;
+        }
+        plm_line_style s = { PLM_MAGENTA, 1.5f, "dotted", 0, PLM_DASH_DOTTED };
         plm_plot_add_line(&plot, x, y, n, s);
         free(x); free(y);
     }
