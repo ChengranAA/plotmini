@@ -95,18 +95,22 @@ typedef struct plm_irect {
 /* ---- axis scale ---------------------------------------------------- */
 typedef enum plm_scale {
     PLM_LINEAR,
-    PLM_LOG
+    PLM_LOG,
+    PLM_CATEGORICAL
 } plm_scale;
 
 /* ---- axis description ---------------------------------------------- */
 typedef struct plm_axis {
-    plm_scale scale;
-    double    min, max;   /* data range; if min==max -> auto-range      */
-    int       tick_hint;  /* desired number of major ticks (0 = auto)   */
-    int       grid;       /* 0 = none, 1 = major grid lines,
-                             2 = major+minor grid lines                  */
-    const char *label;    /* axis label, may be NULL                    */
-    int       label_font; /* reserved (font id)                         */
+    plm_scale   scale;
+    double      min, max;   /* data range; if min==max -> auto-range      */
+    int         tick_hint;  /* desired number of major ticks (0 = auto)   */
+    int         grid;       /* 0 = none, 1 = major grid lines,
+                               2 = major+minor grid lines                  */
+    const char *label;      /* axis label, may be NULL                    */
+    int         label_font; /* reserved (font id)                         */
+    /* categorical axis (PLM_CATEGORICAL) */
+    const char **categories;  /* NULL-terminated array of labels, or NULL */
+    int          num_categories; /* number of category labels              */
 } plm_axis;
 
 /* ---- line style ---------------------------------------------------- */
@@ -140,6 +144,15 @@ typedef struct plm_hist_series {
     int            density;     /* 0 = counts,  1 = probability density */
     plm_bar_style  style;
 } plm_hist_series;
+
+/* ---- bar series (categorical or numeric x) ------------------------- */
+typedef struct plm_bar_series {
+    const float   *x_data;     /* category indices or x positions        */
+    const float   *y_data;     /* bar heights                            */
+    int            count;
+    float          width;      /* bar width in data units (0 = auto)     */
+    plm_bar_style  style;
+} plm_bar_series;
 
 /* ---- scatter series ------------------------------------------------ */
 typedef struct plm_scatter_style {
@@ -184,6 +197,10 @@ typedef struct plm_plot {
     plm_scatter_series *scatters;
     int                 scatter_count;
     int                 scatter_cap;  /* internal                        */
+
+    plm_bar_series *bars;
+    int             bar_count;
+    int             bar_cap;     /* internal                           */
 
     /* internal state (set during render, read-only for user)           */
     plm_irect    plot_area;   /* pixel rect of the data region          */
@@ -260,6 +277,13 @@ void   plm_plot_add_hist(plm_plot *p,
 void   plm_plot_add_scatter(plm_plot *p,
                              const float *x, const float *y, int count,
                              plm_scatter_style style);
+
+/* Append a bar series.  Data is *copied* internally.
+   For categorical axes, x_data should be category indices (0, 1, ...).
+   width is in data units; 0 = auto (0.8 for categorical). */
+void   plm_plot_add_bar(plm_plot *p,
+                         const float *x, const float *y, int count,
+                         float width, plm_bar_style style);
 
 /* ---- rendering ----------------------------------------------------- */
 
@@ -950,6 +974,7 @@ void plm_plot_reset(plm_plot *p) {
     if (p->lines) PLOTMINI_FREE(p->lines);
     if (p->hists) PLOTMINI_FREE(p->hists);
     if (p->scatters) PLOTMINI_FREE(p->scatters);
+    if (p->bars) PLOTMINI_FREE(p->bars);
     plm_plot_init(p);
 }
 
@@ -1015,13 +1040,41 @@ void plm_plot_add_scatter(plm_plot *p,
     if (ss->style.radius <= 0.0f) ss->style.radius = 2.0f;
 }
 
+void plm_plot_add_bar(plm_plot *p,
+                       const float *x, const float *y, int count,
+                       float width, plm_bar_style style) {
+    if (count <= 0) return;
+    if (p->bar_count + 1 > p->bar_cap) {
+        int new_cap = p->bar_cap ? p->bar_cap * 2 : 4;
+        p->bars = (plm_bar_series *)realloc(p->bars,
+                       (size_t)new_cap * sizeof(plm_bar_series));
+        p->bar_cap = new_cap;
+    }
+    plm_bar_series *bs = &p->bars[p->bar_count++];
+    bs->x_data = (const float *)malloc((size_t)count * sizeof(float));
+    bs->y_data = (const float *)malloc((size_t)count * sizeof(float));
+    memcpy((void*)bs->x_data, x, (size_t)count * sizeof(float));
+    memcpy((void*)bs->y_data, y, (size_t)count * sizeof(float));
+    bs->count  = count;
+    bs->width  = width;
+    bs->style  = style;
+}
+
 /* ---- auto-range ---------------------------------------------------- */
 
 static void plm__axis_autorange(plm_axis *ax,
                                  const plm_line_series *lines, int lc,
                                  const plm_hist_series *hists, int hc,
                                  const plm_scatter_series *scatters, int sc,
+                                 const plm_bar_series *bars, int bc,
                                  int is_y) {
+    /* categorical axis: use category count if available */
+    if (ax->scale == PLM_CATEGORICAL && ax->num_categories > 0) {
+        ax->min = -0.5;
+        ax->max = (double)ax->num_categories - 0.5;
+        return;
+    }
+
     double lo =  DBL_MAX;
     double hi = -DBL_MAX;
     int found = 0;
@@ -1049,6 +1102,29 @@ static void plm__axis_autorange(plm_axis *ax,
                 if ((double)v < lo) lo = (double)v;
                 if ((double)v > hi) hi = (double)v;
                 found = 1;
+            }
+        }
+    }
+
+    for (i = 0; i < bc; i++) {
+        const float *data = is_y ? bars[i].y_data : bars[i].x_data;
+        int j;
+        for (j = 0; j < bars[i].count; j++) {
+            float v = data[j];
+            if (!plm__isnan(v)) {
+                if ((double)v < lo) lo = (double)v;
+                if ((double)v > hi) hi = (double)v;
+                found = 1;
+            }
+        }
+        /* for y-axis, also consider bar heights (y values) */
+        if (is_y) {
+            for (j = 0; j < bars[i].count; j++) {
+                float v = bars[i].y_data[j];
+                if (!plm__isnan(v)) {
+                    if ((double)v > hi) hi = (double)v;
+                    found = 1;
+                }
             }
         }
     }
@@ -1169,12 +1245,14 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
     if (p->x_axis.min == p->x_axis.max) {
         plm__axis_autorange(&p->x_axis, p->lines, p->line_count,
                              p->hists, p->hist_count,
-                             p->scatters, p->scatter_count, 0);
+                             p->scatters, p->scatter_count,
+                             p->bars, p->bar_count, 0);
     }
     if (p->y_axis.min == p->y_axis.max) {
         plm__axis_autorange(&p->y_axis, p->lines, p->line_count,
                              p->hists, p->hist_count,
-                             p->scatters, p->scatter_count, 1);
+                             p->scatters, p->scatter_count,
+                             p->bars, p->bar_count, 1);
     }
 
     /* 2. compute plot area in pixels (inset from cell by margins) */
@@ -1196,19 +1274,34 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
 
     /* 4. draw grid lines (X axis - major) */
     if (p->x_axis.grid >= 1) {
-        double range = p->x_axis.max - p->x_axis.min;
-        double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
-                                     p->x_axis.tick_hint : 5);
-        double lo = floor(p->x_axis.min / step) * step;
-        double v;
         plm_color grid_c = PLM_GREY(220);
-        for (v = lo; v <= p->x_axis.max + step * 0.5; v += step) {
-            float px = plm__map_x(p, v);
-            int ix = (int)(px + 0.5f);
-            if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
-                int y;
-                for (y = p->plot_area.y0; y < p->plot_area.y1; y++) {
-                    plm__blend_pixel(fb, ix, y, grid_c, 128);
+        if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 0) {
+            /* grid at each category position */
+            int ci;
+            for (ci = 0; ci < p->x_axis.num_categories; ci++) {
+                float px = plm__map_x(p, (double)ci);
+                int ix = (int)(px + 0.5f);
+                if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                    int y;
+                    for (y = p->plot_area.y0; y < p->plot_area.y1; y++) {
+                        plm__blend_pixel(fb, ix, y, grid_c, 128);
+                    }
+                }
+            }
+        } else {
+            double range = p->x_axis.max - p->x_axis.min;
+            double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
+                                         p->x_axis.tick_hint : 5);
+            double lo = floor(p->x_axis.min / step) * step;
+            double v;
+            for (v = lo; v <= p->x_axis.max + step * 0.5; v += step) {
+                float px = plm__map_x(p, v);
+                int ix = (int)(px + 0.5f);
+                if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                    int y;
+                    for (y = p->plot_area.y0; y < p->plot_area.y1; y++) {
+                        plm__blend_pixel(fb, ix, y, grid_c, 128);
+                    }
                 }
             }
         }
@@ -1216,19 +1309,33 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
 
     /* 5. draw grid lines (Y axis - major) */
     if (p->y_axis.grid >= 1) {
-        double range = p->y_axis.max - p->y_axis.min;
-        double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
-                                     p->y_axis.tick_hint : 5);
-        double lo = floor(p->y_axis.min / step) * step;
-        double v;
         plm_color grid_c = PLM_GREY(220);
-        for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
-            float py = plm__map_y(p, v);
-            int iy = (int)(py + 0.5f);
-            if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
-                int x;
-                for (x = p->plot_area.x0; x < p->plot_area.x1; x++) {
-                    plm__blend_pixel(fb, x, iy, grid_c, 128);
+        if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
+            int ci;
+            for (ci = 0; ci < p->y_axis.num_categories; ci++) {
+                float py = plm__map_y(p, (double)ci);
+                int iy = (int)(py + 0.5f);
+                if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                    int x;
+                    for (x = p->plot_area.x0; x < p->plot_area.x1; x++) {
+                        plm__blend_pixel(fb, x, iy, grid_c, 128);
+                    }
+                }
+            }
+        } else {
+            double range = p->y_axis.max - p->y_axis.min;
+            double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
+                                         p->y_axis.tick_hint : 5);
+            double lo = floor(p->y_axis.min / step) * step;
+            double v;
+            for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
+                float py = plm__map_y(p, v);
+                int iy = (int)(py + 0.5f);
+                if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                    int x;
+                    for (x = p->plot_area.x0; x < p->plot_area.x1; x++) {
+                        plm__blend_pixel(fb, x, iy, grid_c, 128);
+                    }
                 }
             }
         }
@@ -1391,6 +1498,80 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
+    /* 9b. draw bar series */
+    {
+        int si;
+        for (si = 0; si < p->bar_count; si++) {
+            const plm_bar_series *bs = &p->bars[si];
+            if (bs->count <= 0) continue;
+
+            /* determine bar width */
+            float bar_w = bs->width;
+            if (bar_w <= 0.0f) {
+                /* auto width: 0.8 for categorical, computed for numeric */
+                if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 1) {
+                    bar_w = 0.8f;
+                } else {
+                    bar_w = (float)(p->x_axis.max - p->x_axis.min) / (float)bs->count * 0.8f;
+                    if (bar_w <= 0.0f) bar_w = 0.8f;
+                }
+            }
+
+            float half_w = bar_w * 0.5f;
+            /* convert data-unit half-width to pixels */
+            float x_scale = (float)(p->plot_area.x1 - p->plot_area.x0) /
+                           (float)(p->x_axis.max - p->x_axis.min);
+            float half_w_px = half_w * x_scale;
+            float baseline = plm__map_y(p, 0.0);
+            /* clamp baseline to plot area */
+            if (baseline < (float)p->plot_area.y0) baseline = (float)p->plot_area.y0;
+            if (baseline > (float)p->plot_area.y1) baseline = (float)p->plot_area.y1;
+
+            int j;
+            for (j = 0; j < bs->count; j++) {
+                if (plm__isnan(bs->x_data[j]) || plm__isnan(bs->y_data[j]))
+                    continue;
+
+                float px_center = plm__map_x(p, bs->x_data[j]);
+                float bar_top   = plm__map_y(p, bs->y_data[j]);
+
+                float px_left  = px_center - half_w_px;
+                float px_right = px_center + half_w_px;
+
+                /* clip to plot area */
+                if (px_right < (float)p->plot_area.x0 ||
+                    px_left  > (float)p->plot_area.x1) continue;
+
+                if (px_left  < (float)p->plot_area.x0) px_left  = (float)p->plot_area.x0;
+                if (px_right > (float)p->plot_area.x1) px_right = (float)p->plot_area.x1;
+
+                plm_irect r;
+                r.x0 = (int)px_left;
+                r.y0 = (int)(bar_top < baseline ? bar_top : baseline);
+                r.x1 = (int)(px_right + 0.5f);
+                r.y1 = (int)(bar_top < baseline ? baseline : bar_top);
+                if (r.x1 <= r.x0) r.x1 = r.x0 + 1;
+                if (r.y1 <= r.y0) r.y1 = r.y0 + 1;
+
+                plm_fb_fill_rect(fb, r, bs->style.fill_color);
+
+                if (bs->style.stroke_width > 0.0f) {
+                    plm_color sc = bs->style.stroke_color;
+                    int x;
+                    for (x = r.x0; x < r.x1; x++) {
+                        plm__set_pixel(fb, x, r.y0, sc);
+                        plm__set_pixel(fb, x, r.y1 - 1, sc);
+                    }
+                    int y;
+                    for (y = r.y0; y < r.y1; y++) {
+                        plm__set_pixel(fb, r.x0, y, sc);
+                        plm__set_pixel(fb, r.x1 - 1, y, sc);
+                    }
+                }
+            }
+        }
+    }
+
     /* 10. draw title (centred within the cell) */
     if (p->title) {
         int tw = plm_text_width(p->title);
@@ -1411,7 +1592,29 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
     }
 
     /* 12. draw tick labels */
-    {
+    /* X-axis tick labels */
+    if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 0) {
+        int ci;
+        for (ci = 0; ci < p->x_axis.num_categories; ci++) {
+            float px = plm__map_x(p, (double)ci);
+            int ix = (int)(px + 0.5f);
+            if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                const char *label = p->x_axis.categories
+                                    ? p->x_axis.categories[ci] : NULL;
+                if (!label) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%d", ci);
+                    int tw = plm_text_width(buf);
+                    plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
+                                  buf, PLM_BLACK);
+                } else {
+                    int tw = plm_text_width(label);
+                    plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
+                                  label, PLM_BLACK);
+                }
+            }
+        }
+    } else {
         double range = p->x_axis.max - p->x_axis.min;
         double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
                                      p->x_axis.tick_hint : 5);
@@ -1424,11 +1627,32 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%.4g", v);
                 int tw = plm_text_width(buf);
-                plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15, buf, PLM_BLACK);
+                plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
+                              buf, PLM_BLACK);
             }
         }
     }
-    {
+    /* Y-axis tick labels */
+    if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
+        int ci;
+        for (ci = 0; ci < p->y_axis.num_categories; ci++) {
+            float py = plm__map_y(p, (double)ci);
+            int iy = (int)(py + 0.5f);
+            if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                const char *label = p->y_axis.categories
+                                    ? p->y_axis.categories[ci] : NULL;
+                if (!label) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%d", ci);
+                    plm_draw_text(fb, p->plot_area.x0 - plm_text_width(buf) - 4,
+                                  iy + 3, buf, PLM_BLACK);
+                } else {
+                    plm_draw_text(fb, p->plot_area.x0 - plm_text_width(label) - 4,
+                                  iy + 3, label, PLM_BLACK);
+                }
+            }
+        }
+    } else {
         double range = p->y_axis.max - p->y_axis.min;
         double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
                                      p->y_axis.tick_hint : 5);
