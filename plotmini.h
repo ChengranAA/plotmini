@@ -374,18 +374,21 @@ static void plm__blend_pixel(plm_fb *fb, int x, int y, plm_color c, unsigned cha
     }
 }
 
-/* Draw a filled, anti-aliased circle.  Used for scatter dots. */
+/* Draw a filled, anti-aliased circle.  Used for scatter dots.
+   Uses smoothstep falloff over 1.5 px for soft edges. */
 static void plm__fill_circle(plm_fb *fb, int cx, int cy, float radius, plm_color color) {
-    int r = (int)(radius + 0.5f);
+    int r = (int)(radius + 1.5f);  /* extra pixels for the fade band */
     if (r < 1) r = 1;
     int y;
+    float r2 = radius * radius;
+    float fade = 1.5f;  /* width of the fade band */
     for (y = -r; y <= r; y++) {
         float wy = (float)(y * y);
-        float r2 = radius * radius;
-        if (wy >= r2 + radius) continue;  /* completely outside */
+        if (wy >= (radius + fade) * (radius + fade)) continue;
         float half_wf = sqrtf(r2 - wy);
-        int x0 = (int)((float)cx - half_wf);
-        int x1 = (int)((float)cx + half_wf + 0.9999f);
+        if (wy >= r2) half_wf = 0.0f;  /* purely in fade zone */
+        int x0 = (int)((float)cx - half_wf - fade);
+        int x1 = (int)((float)cx + half_wf + fade + 0.9999f);
         int x;
         for (x = x0; x <= x1; x++) {
             float dx = (float)(x - cx);
@@ -393,9 +396,13 @@ static void plm__fill_circle(plm_fb *fb, int cx, int cy, float radius, plm_color
             float dist = sqrtf(dx * dx + dy * dy);
             if (dist <= radius - 0.5f) {
                 plm__set_pixel(fb, x, cy + y, color);
-            } else if (dist < radius + 0.5f) {
-                float t = radius + 0.5f - dist;   /* 0..1 fade band */
+            } else if (dist < radius + fade) {
+                /* smoothstep: t = 1 - (dist - (r-0.5)) / (fade+0.5) */
+                float t = (radius + fade - dist) / (fade + 0.5f);
+                if (t < 0.0f) t = 0.0f;
                 if (t > 1.0f) t = 1.0f;
+                /* smoothstep: t*t*(3 - 2*t) */
+                t = t * t * (3.0f - 2.0f * t);
                 unsigned char alpha = (unsigned char)(t * 255.0f);
                 plm__blend_pixel(fb, x, cy + y, color, alpha);
             }
@@ -607,7 +614,7 @@ plm_irect plm_fit_into(plm_irect bounds, int inner_w, int inner_h) {
     return r;
 }
 
-/* ---- Cohen-Sutherland line clipping --------------------------------- */
+/* ---- Cohen-Sutherland line clipping (float, sub-pixel) ------------- */
 
 #define CLIP_INSIDE  0
 #define CLIP_LEFT    1
@@ -615,7 +622,9 @@ plm_irect plm_fit_into(plm_irect bounds, int inner_w, int inner_h) {
 #define CLIP_BOTTOM  4
 #define CLIP_TOP     8
 
-static int plm__clip_outcode(int x, int y, int xmin, int ymin, int xmax, int ymax) {
+static int plm__clip_outcode_f(float x, float y,
+                                float xmin, float ymin,
+                                float xmax, float ymax) {
     int code = CLIP_INSIDE;
     if (x < xmin) code |= CLIP_LEFT;
     if (x > xmax) code |= CLIP_RIGHT;
@@ -624,105 +633,106 @@ static int plm__clip_outcode(int x, int y, int xmin, int ymin, int xmax, int yma
     return code;
 }
 
-static int plm__clip_line(int *x0, int *y0, int *x1, int *y1,
-                           int xmin, int ymin, int xmax, int ymax) {
-    int code0 = plm__clip_outcode(*x0, *y0, xmin, ymin, xmax, ymax);
-    int code1 = plm__clip_outcode(*x1, *y1, xmin, ymin, xmax, ymax);
+/* Clip a line segment to a rectangle; returns 1 if visible, 0 if rejected.
+   Operates on float coords to preserve sub-pixel precision. */
+static int plm__clip_line_f(float *x0, float *y0, float *x1, float *y1,
+                             float xmin, float ymin, float xmax, float ymax) {
+    int code0 = plm__clip_outcode_f(*x0, *y0, xmin, ymin, xmax, ymax);
+    int code1 = plm__clip_outcode_f(*x1, *y1, xmin, ymin, xmax, ymax);
     while (1) {
-        if (!(code0 | code1)) return 1;
-        if (code0 & code1)    return 0;
+        if (!(code0 | code1)) return 1;   /* both inside */
+        if (code0 & code1)    return 0;   /* both outside same edge */
         int code = code0 ? code0 : code1;
-        int x, y;
+        float x = 0.0f, y = 0.0f;
+        float dx = *x1 - *x0;
+        float dy = *y1 - *y0;
         if (code & CLIP_BOTTOM) {
-            if (*y1 == *y0) return 0;
-            x = *x0 + (int)((double)(*x1 - *x0) * (double)(ymax - *y0) / (double)(*y1 - *y0));
+            if (dy == 0.0f) return 0;
+            x = *x0 + dx * (ymax - *y0) / dy;
             y = ymax;
         } else if (code & CLIP_TOP) {
-            if (*y1 == *y0) return 0;
-            x = *x0 + (int)((double)(*x1 - *x0) * (double)(ymin - *y0) / (double)(*y1 - *y0));
+            if (dy == 0.0f) return 0;
+            x = *x0 + dx * (ymin - *y0) / dy;
             y = ymin;
         } else if (code & CLIP_RIGHT) {
-            if (*x1 == *x0) return 0;
-            y = *y0 + (int)((double)(*y1 - *y0) * (double)(xmax - *x0) / (double)(*x1 - *x0));
+            if (dx == 0.0f) return 0;
+            y = *y0 + dy * (xmax - *x0) / dx;
             x = xmax;
-        } else {
-            if (*x1 == *x0) return 0;
-            y = *y0 + (int)((double)(*y1 - *y0) * (double)(xmin - *x0) / (double)(*x1 - *x0));
+        } else {  /* CLIP_LEFT */
+            if (dx == 0.0f) return 0;
+            y = *y0 + dy * (xmin - *x0) / dx;
             x = xmin;
         }
         if (code == code0) {
             *x0 = x; *y0 = y;
-            code0 = plm__clip_outcode(*x0, *y0, xmin, ymin, xmax, ymax);
+            code0 = plm__clip_outcode_f(*x0, *y0, xmin, ymin, xmax, ymax);
         } else {
             *x1 = x; *y1 = y;
-            code1 = plm__clip_outcode(*x1, *y1, xmin, ymin, xmax, ymax);
+            code1 = plm__clip_outcode_f(*x1, *y1, xmin, ymin, xmax, ymax);
         }
     }
 }
 
-/* ---- Wu anti-aliased line ------------------------------------------ */
+/* ---- Wu anti-aliased line (float, sub-pixel endpoints) ------------- */
 
-static void plm__wu_line(plm_fb *fb, int x0, int y0, int x1, int y1, plm_color c) {
-
-    int steep = abs(y1 - y0) > abs(x1 - x0);
+static void plm__wu_line(plm_fb *fb,
+                          float x0, float y0, float x1, float y1,
+                          plm_color c) {
+    int steep = fabsf(y1 - y0) > fabsf(x1 - x0);
     if (steep) {
-        /* swap roles of x and y so we always iterate over x */
-        { int t = x0; x0 = y0; y0 = t; }
-        { int t = x1; x1 = y1; y1 = t; }
+        { float t = x0; x0 = y0; y0 = t; }
+        { float t = x1; x1 = y1; y1 = t; }
     }
     if (x0 > x1) {
-        /* draw left-to-right */
-        { int t = x0; x0 = x1; x1 = t; }
-        { int t = y0; y0 = y1; y1 = t; }
+        { float t = x0; x0 = x1; x1 = t; }
+        { float t = y0; y0 = y1; y1 = t; }
     }
 
-    int dx = x1 - x0;
-    int dy = y1 - y0;
+    float dx = x1 - x0;
+    float dy = y1 - y0;
     float gradient;
-    if (dx == 0) gradient = 1.0f;
-    else          gradient = (float)dy / (float)dx;
+    if (dx < 1e-6f) gradient = 1.0f;
+    else             gradient = dy / dx;
 
-    /* first endpoint */
-    float yend = (float)y0 + 0.5f;
-    int   xpxl1 = x0;
-    int   ipart_yend = (int)yend;
-    float fpart_yend = yend - (float)ipart_yend;
+    /* ---- handle first endpoint ---- */
+    int   xpxl1 = (int)x0;
+    float yend  = y0 + gradient * ((float)xpxl1 + 1.0f - x0);
+    float xgap  = 1.0f - (x0 - (float)xpxl1);  /* fraction of pixel covered */
     {
-        int   px = xpxl1;
-        int   py = ipart_yend;
-        unsigned char a1 = (unsigned char)((1.0f - fpart_yend) * 255.0f);
-        unsigned char a2 = (unsigned char)(fpart_yend * 255.0f);
+        int   ipart = (int)yend;
+        float fpart = yend - (float)ipart;
+        unsigned char a1 = (unsigned char)((1.0f - fpart) * xgap * 255.0f);
+        unsigned char a2 = (unsigned char)(fpart * xgap * 255.0f);
         if (steep) {
-            plm__blend_pixel(fb, py,     px, c, a1);
-            plm__blend_pixel(fb, py + 1, px, c, a2);
+            plm__blend_pixel(fb, ipart,     xpxl1, c, a1);
+            plm__blend_pixel(fb, ipart + 1, xpxl1, c, a2);
         } else {
-            plm__blend_pixel(fb, px, py,     c, a1);
-            plm__blend_pixel(fb, px, py + 1, c, a2);
+            plm__blend_pixel(fb, xpxl1, ipart,     c, a1);
+            plm__blend_pixel(fb, xpxl1, ipart + 1, c, a2);
         }
     }
 
-    /* second endpoint */
-    float yend2 = (float)y1 + 0.5f;
-    int   xpxl2 = x1;
-    int   ipart_yend2 = (int)yend2;
-    float fpart_yend2 = yend2 - (float)ipart_yend2;
-    {
-        int   px = xpxl2;
-        int   py = ipart_yend2;
-        unsigned char a1 = (unsigned char)((1.0f - fpart_yend2) * 255.0f);
-        unsigned char a2 = (unsigned char)(fpart_yend2 * 255.0f);
+    /* ---- handle second endpoint ---- */
+    int   xpxl2 = (int)x1;
+    float yend2 = y1 + gradient * ((float)xpxl2 - x1);  /* y at exact x1 */
+    float xgap2 = x1 - (float)xpxl2;  /* fraction of pixel covered */
+    if (xgap2 > 0.0f) {
+        int   ipart = (int)yend2;
+        float fpart = yend2 - (float)ipart;
+        unsigned char a1 = (unsigned char)((1.0f - fpart) * xgap2 * 255.0f);
+        unsigned char a2 = (unsigned char)(fpart * xgap2 * 255.0f);
         if (steep) {
-            plm__blend_pixel(fb, py,     px, c, a1);
-            plm__blend_pixel(fb, py + 1, px, c, a2);
+            plm__blend_pixel(fb, ipart,     xpxl2, c, a1);
+            plm__blend_pixel(fb, ipart + 1, xpxl2, c, a2);
         } else {
-            plm__blend_pixel(fb, px, py,     c, a1);
-            plm__blend_pixel(fb, px, py + 1, c, a2);
+            plm__blend_pixel(fb, xpxl2, ipart,     c, a1);
+            plm__blend_pixel(fb, xpxl2, ipart + 1, c, a2);
         }
     }
 
-    /* main loop */
+    /* ---- main loop ---- */
     {
-        float intery = (float)ipart_yend + gradient;
+        float intery = yend + gradient;
         int   x;
         for (x = xpxl1 + 1; x < xpxl2; x++) {
             int   ipart = (int)intery;
@@ -741,28 +751,27 @@ static void plm__wu_line(plm_fb *fb, int x0, int y0, int x1, int y1, plm_color c
     }
 }
 
-static void plm__wu_line_thick(plm_fb *fb, int x0, int y0, int x1, int y1,
-                               plm_color c, float width) {
+static void plm__wu_line_thick(plm_fb *fb,
+                                float x0, float y0, float x1, float y1,
+                                plm_color c, float width) {
     if (width <= 1.0f) {
         plm__wu_line(fb, x0, y0, x1, y1, c);
         return;
     }
     int n = (int)(width + 0.5f);
     float half = (width - 1.0f) * 0.5f;
-    int dx = x1 - x0;
-    int dy = y1 - y0;
-    float len = sqrtf((float)(dx*dx + dy*dy));
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    float len = sqrtf(dx*dx + dy*dy);
     if (len < 1.0f) len = 1.0f;
-    float px = -(float)dy / len;
-    float py =  (float)dx / len;
+    float px = -dy / len;
+    float py =  dx / len;
     int i;
     for (i = 0; i < n; i++) {
         float off = (float)i - half;
         plm__wu_line(fb,
-            (int)((float)x0 + px * off + 0.5f),
-            (int)((float)y0 + py * off + 0.5f),
-            (int)((float)x1 + px * off + 0.5f),
-            (int)((float)y1 + py * off + 0.5f), c);
+            x0 + px * off, y0 + py * off,
+            x1 + px * off, y1 + py * off, c);
     }
 }
 /* ---- embedded bitmap font ------------------------------------------ */
@@ -1265,12 +1274,12 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
                     float py0 = plm__map_y(p, ls->y_data[i-1]);
                     float px1 = plm__map_x(p, ls->x_data[i]);
                     float py1 = plm__map_y(p, ls->y_data[i]);
-                    int ix0 = (int)px0, iy0 = (int)py0;
-                    int ix1 = (int)px1, iy1 = (int)py1;
-                    if (plm__clip_line(&ix0, &iy0, &ix1, &iy1,
-                                       p->plot_area.x0, p->plot_area.y0,
-                                       p->plot_area.x1 - 1, p->plot_area.y1 - 1)) {
-                        plm__wu_line_thick(fb, ix0, iy0, ix1, iy1, ls->style.color, ls->style.width);
+                    if (plm__clip_line_f(&px0, &py0, &px1, &py1,
+                                         (float)p->plot_area.x0, (float)p->plot_area.y0,
+                                         (float)(p->plot_area.x1 - 1),
+                                         (float)(p->plot_area.y1 - 1))) {
+                        plm__wu_line_thick(fb, px0, py0, px1, py1,
+                                           ls->style.color, ls->style.width);
                     }
                 }
                 if (seg_start < 0) seg_start = i;

@@ -146,36 +146,36 @@ TEST(map_y)
 TEST(clip_outcode_inside)
 {
     /* clip rect: (0,0) - (100,100) */
-    int code = plm__clip_outcode(50, 50, 0, 0, 100, 100);
+    int code = plm__clip_outcode_f(50.0f, 50.0f, 0.0f, 0.0f, 100.0f, 100.0f);
     ASSERT_EQ(code, 0);  /* CLIP_INSIDE */
     return 0;
 }
 
 TEST(clip_outcode_left)
 {
-    int code = plm__clip_outcode(-5, 50, 0, 0, 100, 100);
+    int code = plm__clip_outcode_f(-5.0f, 50.0f, 0.0f, 0.0f, 100.0f, 100.0f);
     ASSERT_TRUE(code != 0);
     return 0;
 }
 
 TEST(clip_line_inside)
 {
-    /* both endpoints inside → accepted, coords unchanged */
-    int x0 = 10, y0 = 10, x1 = 90, y1 = 90;
-    int ok = plm__clip_line(&x0, &y0, &x1, &y1, 0, 0, 100, 100);
+    /* both endpoints inside -> accepted, coords unchanged */
+    float x0 = 10.0f, y0 = 10.0f, x1 = 90.0f, y1 = 90.0f;
+    int ok = plm__clip_line_f(&x0, &y0, &x1, &y1, 0.0f, 0.0f, 100.0f, 100.0f);
     ASSERT_TRUE(ok);
-    ASSERT_EQ(x0, 10);
-    ASSERT_EQ(y0, 10);
-    ASSERT_EQ(x1, 90);
-    ASSERT_EQ(y1, 90);
+    ASSERT_EQ((int)x0, 10);
+    ASSERT_EQ((int)y0, 10);
+    ASSERT_EQ((int)x1, 90);
+    ASSERT_EQ((int)y1, 90);
     return 0;
 }
 
 TEST(clip_line_completely_outside)
 {
     /* both points far to the left */
-    int x0 = -50, y0 = 10, x1 = -10, y1 = 10;
-    int ok = plm__clip_line(&x0, &y0, &x1, &y1, 0, 0, 100, 100);
+    float x0 = -50.0f, y0 = 10.0f, x1 = -10.0f, y1 = 10.0f;
+    int ok = plm__clip_line_f(&x0, &y0, &x1, &y1, 0.0f, 0.0f, 100.0f, 100.0f);
     ASSERT_FALSE(ok);
     return 0;
 }
