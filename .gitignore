@@ -4,11 +4,12 @@
 *.dylib
 
 # example & test executables (anything without .c/.h extension)
-examples/*
+
 !examples/*.c
 !examples/*.h
 !examples/Makefile
 examples/dep
+examples/build
 
 test/test_*
 !test/*.c
