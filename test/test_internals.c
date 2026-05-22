@@ -194,10 +194,12 @@ TEST(autorange_lines_only)
     /* trigger autorange (min==max on init) */
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
-                         p.scatters, p.scatter_count, 0);
+                         p.scatters, p.scatter_count,
+                         p.bars, p.bar_count, 0);
     plm__axis_autorange(&p.y_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
-                         p.scatters, p.scatter_count, 1);
+                         p.scatters, p.scatter_count,
+                         p.bars, p.bar_count, 1);
 
     /* X: 1..5 + 5% padding = 1 - 0.2 .. 5 + 0.2 */
     ASSERT_TRUE(p.x_axis.min < 1.0);
@@ -222,10 +224,12 @@ TEST(autorange_single_value)
 
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
-                         p.scatters, p.scatter_count, 0);
+                         p.scatters, p.scatter_count,
+                         p.bars, p.bar_count, 0);
     plm__axis_autorange(&p.y_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
-                         p.scatters, p.scatter_count, 1);
+                         p.scatters, p.scatter_count,
+                         p.bars, p.bar_count, 1);
 
     /* single value → hi=lo+1, lo=lo-1 → 4..6 */
     ASSERT_TRUE(p.x_axis.min < 5.0);
@@ -245,7 +249,8 @@ TEST(autorange_no_data)
 
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
-                         p.scatters, p.scatter_count, 0);
+                         p.scatters, p.scatter_count,
+                         p.bars, p.bar_count, 0);
 
     /* no data → defaults to 0..1 */
     ASSERT_EQ(p.x_axis.min, 0.0);
