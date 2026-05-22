@@ -438,6 +438,9 @@ void   plm_plot_add_stem(plm_plot *p,
 
 /* ---- rendering ----------------------------------------------------- */
 
+/* Save framebuffer as 24-bit BMP.  Returns 0 on success, non-zero on error. */
+int    plm_fb_save_bmp(const plm_fb *fb, const char *path);
+
 /* Render the current plot description into a framebuffer.
    Layout (margins, tick labels) is recomputed every call, so you can
    call this repeatedly with different fb sizes or updated data. */
@@ -661,6 +664,47 @@ void plm_fb_swizzle_rgba_bgra(plm_fb *fb) {
         p[0] = p[2];
         p[2] = r;
     }
+}
+
+int plm_fb_save_bmp(const plm_fb *fb, const char *path) {
+    if (!fb || !fb->pixels || fb->width <= 0 || fb->height <= 0) return 1;
+    FILE *f = fopen(path, "wb");
+    if (!f) return 1;
+    int w = fb->width, h = fb->height, row_size = (w * 3 + 3) & ~3;
+    unsigned char hdr[54] = {0};
+    hdr[0] = 'B'; hdr[1] = 'M';
+    int fsize = 54 + row_size * h;
+    hdr[2] = (unsigned char)fsize; hdr[3] = (unsigned char)(fsize>>8);
+    hdr[4] = (unsigned char)(fsize>>16); hdr[5] = (unsigned char)(fsize>>24);
+    hdr[10] = 54;
+    hdr[14] = 40;
+    hdr[18] = (unsigned char)w; hdr[19] = (unsigned char)(w>>8);
+    hdr[22] = (unsigned char)h; hdr[23] = (unsigned char)(h>>8);
+    hdr[26] = 1;
+    hdr[28] = 24;
+    fwrite(hdr, 54, 1, f);
+    unsigned char *row = (unsigned char *)malloc((size_t)row_size);
+    if (!row) { fclose(f); return 1; }
+    int y;
+    for (y = h - 1; y >= 0; y--) {
+        const unsigned char *src = fb->pixels + y * fb->stride;
+        int x;
+        if (fb->bpp == 4) {
+            for (x = 0; x < w; x++) {
+                row[x*3+0] = src[x*4+2];
+                row[x*3+1] = src[x*4+1];
+                row[x*3+2] = src[x*4+0];
+            }
+        } else {
+            for (x = 0; x < w; x++) {
+                row[x*3+0] = row[x*3+1] = row[x*3+2] = src[x];
+            }
+        }
+        fwrite(row, (size_t)row_size, 1, f);
+    }
+    free(row);
+    fclose(f);
+    return 0;
 }
 
 /* ---- colormap helpers ---------------------------------------------- */

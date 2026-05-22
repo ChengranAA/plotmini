@@ -340,8 +340,11 @@ int main(void) {
 
     /* ---- render ---- */
     plm_figure_render(&fig, &fb);
-    plm_fb_swizzle_rgba_bgra(&fb);
 
+    /* save screenshot for README */
+    plm_fb_save_bmp(&fb, "showcase.bmp");
+
+    plm_fb_swizzle_rgba_bgra(&fb);
     while (mfb_update(win, fb.pixels) >= 0) { /* idle */ }
 
     plm_figure_reset(&fig);
