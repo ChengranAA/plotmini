@@ -56,10 +56,21 @@ int main(void) {
         sz[i] = ((float)rand() / RAND_MAX) * 4.0f - 1.0f;
     }
 
+    /* ---- 4. depth-test verification points ------------------------ */
+    /* Points BELOW the surface (should be hidden): */
+    float hidden_x[4] = { 0.0f, 2.0f, 4.0f, 6.0f };
+    float hidden_y[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float hidden_z[4] = { 2.5f, 0.864f, -1.068f, -0.640f };
+
+    /* Points ABOVE the surface (should be visible): */
+    float visible_x[4] = { 0.0f, 2.0f, 4.0f, 6.0f };
+    float visible_y[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float visible_z[4] = { 3.5f, 1.864f, -0.068f, 0.360f };
+
     /* ---- build plot ----------------------------------------------- */
     plm3d_plot p;
     plm3d_plot_init(&p);
-    p.title   = "plotmini3d - wireframe + line + scatter";
+    p.title   = "plotmini3d - surface colormap + wireframe + line + scatter";
     p.x_label = "X";
     p.y_label = "Y";
     p.z_label = "Z";
@@ -68,13 +79,21 @@ int main(void) {
     p.view.elevation = 30.0;
 
     plm3d_plot_add_surface(&p, surf_x, surf_y, surf_z, nx, ny,
-        (plm3d_surface_style){PLM_GREY(140), 1.0f});
+        (plm3d_surface_style){PLM_GREY(180), 0.6f, PLM_CMAP_VIRIDIS});
 
     plm3d_plot_add_line(&p, lx, ly, lz, nline,
         (plm3d_line_style){PLM_RED, 1.0f});
 
     plm3d_plot_add_scatter(&p, sx, sy, sz, nscat,
         (plm3d_scatter_style){PLM_BLUE, 3.5f});
+
+    /* Depth-test markers: large CYAN = should be HIDDEN (below surface) */
+    plm3d_plot_add_scatter(&p, hidden_x, hidden_y, hidden_z, 4,
+        (plm3d_scatter_style){PLM_CYAN, 8.0f});
+
+    /* Depth-test markers: large MAGENTA = should be VISIBLE (above surface) */
+    plm3d_plot_add_scatter(&p, visible_x, visible_y, visible_z, 4,
+        (plm3d_scatter_style){PLM_MAGENTA, 8.0f});
 
     /* ---- render and save ------------------------------------------ */
     plm3d_render(&p, &fb);

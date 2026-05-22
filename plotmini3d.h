@@ -83,6 +83,7 @@ typedef struct plm3d_line_series {
 typedef struct plm3d_surface_style {
     plm_color line_color;
     float     line_width;
+    plm_cmap  cmap;        /* colormap for surface fill; PLM_CMAP_NONE = solid fill derived from line_color */
 } plm3d_surface_style;
 
 typedef struct plm3d_surface_series {
@@ -726,10 +727,17 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
 
         /* ---- fill quads for proper occlusion (z-buffer) ---- */
         {
-                        int fr = ss->style.line_color.r + (255 - ss->style.line_color.r) * 2 / 3;
-            int fg = ss->style.line_color.g + (255 - ss->style.line_color.g) * 2 / 3;
-            int fb2 = ss->style.line_color.b + (255 - ss->style.line_color.b) * 2 / 3;
-            plm_color fill_c = PLM_RGBA(fr, fg, fb2, 255);
+            int use_cmap = (ss->style.cmap != PLM_CMAP_NONE);
+            plm_color solid_fill_c;
+            if (!use_cmap) {
+                int fr = ss->style.line_color.r + (255 - ss->style.line_color.r) * 2 / 3;
+                int fg = ss->style.line_color.g + (255 - ss->style.line_color.g) * 2 / 3;
+                int fb2 = ss->style.line_color.b + (255 - ss->style.line_color.b) * 2 / 3;
+                solid_fill_c = PLM_RGBA(fr, fg, fb2, 255);
+            }
+
+            double z_data_min = p->z_axis.min;
+            double z_data_range = z_range;
 
             for (int i = 0; i < nx - 1; i++) {
                 for (int j = 0; j < ny - 1; j++) {
@@ -740,6 +748,20 @@ static void plm3d__render_surfaces(plm3d_plot *p, plm_fb *fb, float *zbuf,
                     float qx[4] = { px[i00], px[i10], px[i11], px[i01] };
                     float qy[4] = { py[i00], py[i10], py[i11], py[i01] };
                     float qz[4] = { pz[i00], pz[i10], pz[i11], pz[i01] };
+
+                    plm_color fill_c;
+                    if (use_cmap) {
+                        float z_avg = 0.25f * (ss->z_data[i00] + ss->z_data[i10] +
+                                               ss->z_data[i11] + ss->z_data[i01]);
+                        float t;
+                        if (z_data_range > 0.0)
+                            t = (float)((z_avg - z_data_min) / z_data_range);
+                        else
+                            t = 0.5f;
+                        fill_c = plm_cmap_lookup(t, ss->style.cmap);
+                    } else {
+                        fill_c = solid_fill_c;
+                    }
                     plm3d__fill_quad_z(fb, zbuf, qx, qy, qz, fill_c);
                 }
             }

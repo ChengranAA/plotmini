@@ -366,6 +366,7 @@ void   plm_fb_swizzle_rgba_bgra(plm_fb *fb);
 /* ---- colormap ----------------------------------------------------- */
 
 typedef enum plm_cmap {
+    PLM_CMAP_NONE = 0,
     PLM_CMAP_HEAT,
     PLM_CMAP_VIRIDIS,
     PLM_CMAP_GRAY,
@@ -377,6 +378,8 @@ typedef enum plm_cmap {
     PLM_CMAP_COOLWARM,
     PLM_CMAP_JET
 } plm_cmap;
+
+plm_color plm_cmap_lookup(float t, plm_cmap cmap);
 
 void   plm_imshow(plm_fb *fb, plm_irect rect,
                   const float *data, int data_w, int data_h,
@@ -937,6 +940,25 @@ static plm_color plm__cmap_jet(float t) {
         0.875f, 1.000f, 0.000f, 0.000f,
         1.000f, 0.500f, 0.000f, 0.000f };
     return plm__cmap_lerp(t, c, 9);
+}
+
+plm_color plm_cmap_lookup(float t, plm_cmap cmap) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    switch (cmap) {
+        default:
+        case PLM_CMAP_HEAT:     return plm__cmap_heat(t);
+        case PLM_CMAP_VIRIDIS:  return plm__cmap_viridis(t);
+        case PLM_CMAP_GRAY:     return plm__cmap_gray(t);
+        case PLM_CMAP_PLASMA:   return plm__cmap_plasma(t);
+        case PLM_CMAP_INFERNO:  return plm__cmap_inferno(t);
+        case PLM_CMAP_MAGMA:    return plm__cmap_magma(t);
+        case PLM_CMAP_TURBO:    return plm__cmap_turbo(t);
+        case PLM_CMAP_CIVIDIS:  return plm__cmap_cividis(t);
+        case PLM_CMAP_COOLWARM: return plm__cmap_coolwarm(t);
+        case PLM_CMAP_JET:      return plm__cmap_jet(t);
+        case PLM_CMAP_NONE:     return PLM_RGBA(128, 128, 128, 255);
+    }
 }
 
 void plm_imshow(plm_fb *fb, plm_irect rect,
