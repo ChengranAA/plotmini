@@ -356,12 +356,37 @@ void   plm_fb_swizzle_rgba_bgra(plm_fb *fb);
 typedef enum plm_cmap {
     PLM_CMAP_HEAT,
     PLM_CMAP_VIRIDIS,
-    PLM_CMAP_GRAY
+    PLM_CMAP_GRAY,
+    PLM_CMAP_PLASMA,
+    PLM_CMAP_INFERNO,
+    PLM_CMAP_MAGMA,
+    PLM_CMAP_TURBO,
+    PLM_CMAP_CIVIDIS,
+    PLM_CMAP_COOLWARM,
+    PLM_CMAP_JET
 } plm_cmap;
 
 void   plm_imshow(plm_fb *fb, plm_irect rect,
                   const float *data, int data_w, int data_h,
                   double vmin, double vmax, plm_cmap cmap);
+
+/* ---- colorbar ----------------------------------------------------- */
+
+typedef enum plm_cbar_orient {
+    PLM_CBAR_VERTICAL = 0,   /* vertical bar (default), left→right gradient */
+    PLM_CBAR_HORIZONTAL = 1  /* horizontal bar, top→bottom gradient */
+} plm_cbar_orient;
+
+/* Draw a colorbar (gradient + tick labels + optional label).
+   rect: bounding box for the entire colorbar (including labels).
+   vmin/vmax: data range mapped to the gradient.
+   tick_hint: desired number of ticks (0 = auto ~5).
+   orient: PLM_CBAR_VERTICAL or PLM_CBAR_HORIZONTAL.
+   label: optional title placed adjacent to the bar. */
+void   plm_colorbar(plm_fb *fb, plm_irect rect,
+                     double vmin, double vmax, plm_cmap cmap,
+                     plm_cbar_orient orient, const char *label,
+                     int tick_hint);
 
 /* ---- plot lifecycle ------------------------------------------------ */
 
@@ -724,57 +749,175 @@ int plm_fb_save_bmp(const plm_fb *fb, const char *path) {
 
 /* ---- colormap helpers ---------------------------------------------- */
 
+/* ---- generic piecewise-linear colormap helper ---------------------- */
+/* ctrl is [t0,r0,g0,b0, t1,r1,g1,b1, ...] * npts points.
+   Values clamped to [0,1] before lookup. */
+static plm_color plm__cmap_lerp(float t, const float *ctrl, int npts) {
+    if (t <= ctrl[0]) {
+        return PLM_RGBA((unsigned char)(ctrl[1]*255.0f),
+                        (unsigned char)(ctrl[2]*255.0f),
+                        (unsigned char)(ctrl[3]*255.0f), 0xFF);
+    }
+    int i;
+    for (i = 1; i < npts; i++) {
+        if (t <= ctrl[i*4]) {
+            float s = (t - ctrl[(i-1)*4]) / (ctrl[i*4] - ctrl[(i-1)*4]);
+            float r = ctrl[(i-1)*4+1] + s * (ctrl[i*4+1] - ctrl[(i-1)*4+1]);
+            float g = ctrl[(i-1)*4+2] + s * (ctrl[i*4+2] - ctrl[(i-1)*4+2]);
+            float b = ctrl[(i-1)*4+3] + s * (ctrl[i*4+3] - ctrl[(i-1)*4+3]);
+            return PLM_RGBA((unsigned char)(r*255.0f),
+                            (unsigned char)(g*255.0f),
+                            (unsigned char)(b*255.0f), 0xFF);
+        }
+    }
+    /* past last point */
+    return PLM_RGBA((unsigned char)(ctrl[(npts-1)*4+1]*255.0f),
+                    (unsigned char)(ctrl[(npts-1)*4+2]*255.0f),
+                    (unsigned char)(ctrl[(npts-1)*4+3]*255.0f), 0xFF);
+}
+
+/* ---- individual colormaps (control points from matplotlib) --------- */
+
 static plm_color plm__cmap_heat(float t) {
     if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
-    unsigned char r, g, b;
-    if (t < 0.25f) {
-        float s = t / 0.25f;
-        r = 0; g = 0; b = (unsigned char)(64 + 191.0f * s);
-    } else if (t < 0.5f) {
-        float s = (t - 0.25f) / 0.25f;
-        r = 0; g = (unsigned char)(255.0f * s);
-        b = (unsigned char)(255.0f * (1.0f - s));
-    } else if (t < 0.75f) {
-        float s = (t - 0.5f) / 0.25f;
-        r = (unsigned char)(255.0f * s); g = 255; b = 0;
-    } else {
-        float s = (t - 0.75f) / 0.25f;
-        r = 255; g = (unsigned char)(255.0f * (1.0f - s)); b = 0;
-    }
-    return PLM_RGBA(r, g, b, 0xFF);
+    static const float c[] = {
+        0.00f,  0.00f,  0.00f,  0.00f,
+        0.25f,  0.25f,  0.00f,  0.40f,
+        0.50f,  0.00f,  0.25f,  1.00f,
+        0.75f,  0.25f,  1.00f,  0.75f,
+        1.00f,  1.00f,  1.00f,  0.25f };
+    return plm__cmap_lerp(t, c, 5);
 }
 
 static plm_color plm__cmap_viridis(float t) {
     if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
-    unsigned char r, g, b;
-    if (t < 0.25f) {
-        float s = t / 0.25f;
-        r = (unsigned char)(68.0f + 25.0f * s);
-        g = (unsigned char)(1.0f + 84.0f * s);
-        b = (unsigned char)(84.0f + 57.0f * s);
-    } else if (t < 0.5f) {
-        float s = (t - 0.25f) / 0.25f;
-        r = (unsigned char)(93.0f - 72.0f * s);
-        g = (unsigned char)(85.0f + 100.0f * s);
-        b = (unsigned char)(141.0f - 57.0f * s);
-    } else if (t < 0.75f) {
-        float s = (t - 0.5f) / 0.25f;
-        r = (unsigned char)(21.0f + 164.0f * s);
-        g = (unsigned char)(185.0f + 46.0f * s);
-        b = (unsigned char)(84.0f - 45.0f * s);
-    } else {
-        float s = (t - 0.75f) / 0.25f;
-        r = (unsigned char)(185.0f + 68.0f * s);
-        g = (unsigned char)(231.0f - 7.0f * s);
-        b = (unsigned char)(39.0f - 2.0f * s);
-    }
-    return PLM_RGBA(r, g, b, 0xFF);
+    static const float c[] = {
+        0.000f, 0.267f, 0.004f, 0.329f,
+        0.125f, 0.282f, 0.141f, 0.458f,
+        0.250f, 0.253f, 0.266f, 0.530f,
+        0.375f, 0.206f, 0.372f, 0.554f,
+        0.500f, 0.164f, 0.471f, 0.558f,
+        0.625f, 0.128f, 0.567f, 0.550f,
+        0.750f, 0.134f, 0.659f, 0.514f,
+        0.875f, 0.281f, 0.748f, 0.408f,
+        1.000f, 0.477f, 0.821f, 0.318f };
+    return plm__cmap_lerp(t, c, 9);
 }
 
 static plm_color plm__cmap_gray(float t) {
     if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
     unsigned char v = (unsigned char)(t * 255.0f);
     return PLM_RGBA(v, v, v, 0xFF);
+}
+
+static plm_color plm__cmap_plasma(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.050f, 0.030f, 0.528f,
+        0.125f, 0.249f, 0.004f, 0.645f,
+        0.250f, 0.497f, 0.036f, 0.661f,
+        0.375f, 0.704f, 0.104f, 0.562f,
+        0.500f, 0.861f, 0.244f, 0.355f,
+        0.625f, 0.950f, 0.415f, 0.153f,
+        0.750f, 0.979f, 0.602f, 0.037f,
+        0.875f, 0.969f, 0.799f, 0.045f,
+        1.000f, 0.940f, 0.975f, 0.131f };
+    return plm__cmap_lerp(t, c, 9);
+}
+
+static plm_color plm__cmap_inferno(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.001f, 0.000f, 0.014f,
+        0.125f, 0.170f, 0.030f, 0.280f,
+        0.250f, 0.389f, 0.113f, 0.436f,
+        0.375f, 0.611f, 0.192f, 0.375f,
+        0.500f, 0.792f, 0.295f, 0.218f,
+        0.625f, 0.922f, 0.424f, 0.074f,
+        0.750f, 0.981f, 0.569f, 0.029f,
+        0.875f, 0.996f, 0.740f, 0.110f,
+        1.000f, 0.988f, 0.998f, 0.645f };
+    return plm__cmap_lerp(t, c, 9);
+}
+
+static plm_color plm__cmap_magma(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.001f, 0.000f, 0.014f,
+        0.125f, 0.161f, 0.031f, 0.365f,
+        0.250f, 0.361f, 0.095f, 0.493f,
+        0.375f, 0.568f, 0.161f, 0.449f,
+        0.500f, 0.752f, 0.252f, 0.287f,
+        0.625f, 0.895f, 0.380f, 0.100f,
+        0.750f, 0.975f, 0.528f, 0.137f,
+        0.875f, 0.994f, 0.745f, 0.370f,
+        1.000f, 0.988f, 0.991f, 0.750f };
+    return plm__cmap_lerp(t, c, 9);
+}
+
+static plm_color plm__cmap_turbo(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.190f, 0.072f, 0.232f,
+        0.067f, 0.322f, 0.168f, 0.542f,
+        0.133f, 0.291f, 0.355f, 0.749f,
+        0.200f, 0.135f, 0.524f, 0.798f,
+        0.267f, 0.006f, 0.635f, 0.706f,
+        0.333f, 0.030f, 0.690f, 0.538f,
+        0.400f, 0.201f, 0.716f, 0.348f,
+        0.467f, 0.447f, 0.723f, 0.172f,
+        0.533f, 0.664f, 0.695f, 0.066f,
+        0.600f, 0.820f, 0.623f, 0.058f,
+        0.667f, 0.920f, 0.513f, 0.147f,
+        0.733f, 0.966f, 0.386f, 0.250f,
+        0.800f, 0.962f, 0.248f, 0.322f,
+        0.867f, 0.904f, 0.116f, 0.319f,
+        0.933f, 0.800f, 0.016f, 0.223f,
+        1.000f, 0.659f, 0.000f, 0.100f };
+    return plm__cmap_lerp(t, c, 16);
+}
+
+static plm_color plm__cmap_cividis(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.000f, 0.126f, 0.302f,
+        0.125f, 0.169f, 0.310f, 0.436f,
+        0.250f, 0.312f, 0.443f, 0.446f,
+        0.375f, 0.448f, 0.553f, 0.397f,
+        0.500f, 0.589f, 0.653f, 0.319f,
+        0.625f, 0.735f, 0.743f, 0.227f,
+        0.750f, 0.871f, 0.826f, 0.153f,
+        0.875f, 0.949f, 0.894f, 0.168f,
+        1.000f, 0.995f, 0.949f, 0.291f };
+    return plm__cmap_lerp(t, c, 9);
+}
+
+static plm_color plm__cmap_coolwarm(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.230f, 0.299f, 0.754f,
+        0.200f, 0.553f, 0.692f, 0.920f,
+        0.400f, 0.820f, 0.860f, 0.876f,
+        0.500f, 0.866f, 0.866f, 0.866f,
+        0.600f, 0.876f, 0.820f, 0.765f,
+        0.800f, 0.920f, 0.553f, 0.519f,
+        1.000f, 0.706f, 0.016f, 0.150f };
+    return plm__cmap_lerp(t, c, 7);
+}
+
+static plm_color plm__cmap_jet(float t) {
+    if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+    static const float c[] = {
+        0.000f, 0.000f, 0.000f, 0.515f,
+        0.125f, 0.000f, 0.000f, 1.000f,
+        0.250f, 0.000f, 0.500f, 1.000f,
+        0.375f, 0.000f, 1.000f, 1.000f,
+        0.500f, 0.500f, 1.000f, 0.500f,
+        0.625f, 1.000f, 1.000f, 0.000f,
+        0.750f, 1.000f, 0.500f, 0.000f,
+        0.875f, 1.000f, 0.000f, 0.000f,
+        1.000f, 0.500f, 0.000f, 0.000f };
+    return plm__cmap_lerp(t, c, 9);
 }
 
 void plm_imshow(plm_fb *fb, plm_irect rect,
@@ -807,9 +950,16 @@ void plm_imshow(plm_fb *fb, plm_irect rect,
     plm_color (*cmap_fn)(float);
     switch (cmap) {
         default:
-        case PLM_CMAP_HEAT:    cmap_fn = plm__cmap_heat;    break;
-        case PLM_CMAP_VIRIDIS: cmap_fn = plm__cmap_viridis; break;
-        case PLM_CMAP_GRAY:    cmap_fn = plm__cmap_gray;    break;
+        case PLM_CMAP_HEAT:     cmap_fn = plm__cmap_heat;     break;
+        case PLM_CMAP_VIRIDIS:  cmap_fn = plm__cmap_viridis;  break;
+        case PLM_CMAP_GRAY:     cmap_fn = plm__cmap_gray;     break;
+        case PLM_CMAP_PLASMA:   cmap_fn = plm__cmap_plasma;   break;
+        case PLM_CMAP_INFERNO:  cmap_fn = plm__cmap_inferno;  break;
+        case PLM_CMAP_MAGMA:    cmap_fn = plm__cmap_magma;    break;
+        case PLM_CMAP_TURBO:    cmap_fn = plm__cmap_turbo;    break;
+        case PLM_CMAP_CIVIDIS:  cmap_fn = plm__cmap_cividis;  break;
+        case PLM_CMAP_COOLWARM: cmap_fn = plm__cmap_coolwarm; break;
+        case PLM_CMAP_JET:      cmap_fn = plm__cmap_jet;      break;
     }
     int dy;
     for (dy = 0; dy < rh; dy++) {
@@ -832,6 +982,7 @@ void plm_imshow(plm_fb *fb, plm_irect rect,
         }
     }
 }
+
 plm_irect plm_fit_into(plm_irect bounds, int inner_w, int inner_h) {
     int bw = bounds.x1 - bounds.x0;
     int bh = bounds.y1 - bounds.y0;
@@ -3198,6 +3349,250 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
+}
+
+/* ---- colorbar ------------------------------------------------------ */
+
+void plm_colorbar(plm_fb *fb, plm_irect rect,
+                  double vmin, double vmax, plm_cmap cmap,
+                  plm_cbar_orient orient, const char *label,
+                  int tick_hint) {
+    if (fb->bpp != 4 && fb->bpp != 1) return;
+    /* clip rect */
+    if (rect.x0 < 0) rect.x0 = 0;
+    if (rect.y0 < 0) rect.y0 = 0;
+    if (rect.x1 > fb->width)  rect.x1 = fb->width;
+    if (rect.y1 > fb->height) rect.y1 = fb->height;
+    if (rect.x0 >= rect.x1 || rect.y0 >= rect.y1) return;
+
+    /* resolve colormap function (same switch as imshow) */
+    plm_color (*cmap_fn)(float);
+    switch (cmap) {
+        default:
+        case PLM_CMAP_HEAT:     cmap_fn = plm__cmap_heat;     break;
+        case PLM_CMAP_VIRIDIS:  cmap_fn = plm__cmap_viridis;  break;
+        case PLM_CMAP_GRAY:     cmap_fn = plm__cmap_gray;     break;
+        case PLM_CMAP_PLASMA:   cmap_fn = plm__cmap_plasma;   break;
+        case PLM_CMAP_INFERNO:  cmap_fn = plm__cmap_inferno;  break;
+        case PLM_CMAP_MAGMA:    cmap_fn = plm__cmap_magma;    break;
+        case PLM_CMAP_TURBO:    cmap_fn = plm__cmap_turbo;    break;
+        case PLM_CMAP_CIVIDIS:  cmap_fn = plm__cmap_cividis;  break;
+        case PLM_CMAP_COOLWARM: cmap_fn = plm__cmap_coolwarm; break;
+        case PLM_CMAP_JET:      cmap_fn = plm__cmap_jet;      break;
+    }
+
+#ifndef PLOTMINI_NO_FONT
+    const int S = PLOTMINI_TEXT_SCALE;
+    const int char_w  = PLM_FONT_ADVANCE * S;
+    const int char_h  = PLM_FONT_H * S;
+    const int tick_len = 4 * S;
+    const int gap      = 3 * S;
+    const int tick_text_gap = 2 * S;
+    int bar_w, bar_h, bar_x0, bar_y0;
+
+    if (tick_hint <= 0) tick_hint = 5;
+
+    /* compute layout: bar region vs label/tick region */
+    if (orient == PLM_CBAR_HORIZONTAL) {
+        /* horizontal bar: gradient left(min) → right(max) */
+        int top_margin  = gap + char_h + tick_text_gap + tick_len + gap;
+        int bot_margin  = (label ? char_h + gap : 0);
+        bar_h = rect.y1 - rect.y0 - top_margin - bot_margin;
+        if (bar_h < 6) bar_h = 6;
+        bar_w = rect.x1 - rect.x0;
+        bar_x0 = rect.x0;
+        bar_y0 = rect.y0 + top_margin;
+
+        /* draw gradient */
+        {
+            int dx;
+            for (dx = 0; dx < bar_w; dx++) {
+                float t = (float)dx / (float)(bar_w > 1 ? bar_w - 1 : 1);
+                plm_color c = cmap_fn(t);
+                int dy;
+                for (dy = 0; dy < bar_h; dy++) {
+                    int px = bar_x0 + dx;
+                    int py = bar_y0 + dy;
+                    if (fb->bpp == 4) {
+                        unsigned char *p = fb->pixels + py * fb->stride + px * 4;
+                        p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = c.a;
+                    } else {
+                        fb->pixels[py * fb->stride + px] = (unsigned char)(t * 255.0f);
+                    }
+                }
+            }
+        }
+
+        /* border */
+        {
+            plm_irect br = { bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h };
+            plm_color border = PLM_FG_COLOR;
+            { plm_irect r = { br.x0, br.y0, br.x1, br.y0 + 1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { br.x0, br.y1 - 1, br.x1, br.y1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { br.x0, br.y0, br.x0 + 1, br.y1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { br.x1 - 1, br.y0, br.x1, br.y1 }; plm_fb_fill_rect(fb, r, border); }
+        }
+
+        /* tick marks & labels */
+        {
+            double range = vmax - vmin;
+            if (range <= 0.0) range = 1.0;
+            double step = plm__nice_step(range, tick_hint);
+            double lo = floor(vmin / step) * step;
+            double v;
+            for (v = lo; v <= vmax + step * 0.5; v += step) {
+                double t_val = (v - vmin) / range;
+                int tx = bar_x0 + (int)(t_val * (double)(bar_w - 1) + 0.5);
+                if (tx < bar_x0 || tx >= bar_x0 + bar_w) continue;
+                /* tick line upward */
+                int ty;
+                for (ty = bar_y0 - tick_len; ty < bar_y0; ty++) {
+                    if (ty >= rect.y0 && ty < rect.y1)
+                        plm__set_pixel(fb, tx, ty, PLM_FG_COLOR);
+                }
+                /* tick label */
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.4g", v);
+                int tw = plm__text_width_s(buf, S);
+                int lx = tx - tw / 2;
+                int ly = bar_y0 - tick_len - tick_text_gap;
+                plm__draw_text_s(fb, lx, ly, buf, PLM_FG_COLOR, S);
+            }
+        }
+
+        /* label below bar */
+        if (label) {
+            int tw = plm__text_width_s(label, S);
+            int lx = bar_x0 + (bar_w - tw) / 2;
+            int ly = bar_y0 + bar_h + gap;
+            plm__draw_text_s(fb, lx, ly + char_h, label, PLM_FG_COLOR, S);
+        }
+    } else {
+        /* vertical bar: gradient bottom(min) → top(max) */
+        int left_margin = gap + char_w + tick_text_gap + tick_len + gap;
+        int right_margin = (label ? char_h + gap : 0);
+        bar_w = rect.x1 - rect.x0 - left_margin - right_margin;
+        if (bar_w < 6) bar_w = 6;
+        bar_h = rect.y1 - rect.y0;
+        bar_x0 = rect.x0 + left_margin;
+        bar_y0 = rect.y0;
+
+        /* draw gradient (bottom = vmin, top = vmax) */
+        {
+            int dy;
+            for (dy = 0; dy < bar_h; dy++) {
+                /* flip: pixel y=0 is top, but vmin is at bottom */
+                float t = 1.0f - (float)dy / (float)(bar_h > 1 ? bar_h - 1 : 1);
+                plm_color c = cmap_fn(t);
+                int dx;
+                for (dx = 0; dx < bar_w; dx++) {
+                    int px = bar_x0 + dx;
+                    int py = bar_y0 + dy;
+                    if (fb->bpp == 4) {
+                        unsigned char *p = fb->pixels + py * fb->stride + px * 4;
+                        p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = c.a;
+                    } else {
+                        fb->pixels[py * fb->stride + px] = (unsigned char)(t * 255.0f);
+                    }
+                }
+            }
+        }
+
+        /* border */
+        {
+            plm_irect br = { bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + bar_h };
+            plm_color border = PLM_FG_COLOR;
+            { plm_irect r = { br.x0, br.y0, br.x1, br.y0 + 1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { br.x0, br.y1 - 1, br.x1, br.y1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { br.x0, br.y0, br.x0 + 1, br.y1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { br.x1 - 1, br.y0, br.x1, br.y1 }; plm_fb_fill_rect(fb, r, border); }
+        }
+
+        /* tick marks & labels (on the left side) */
+        {
+            double range = vmax - vmin;
+            if (range <= 0.0) range = 1.0;
+            double step = plm__nice_step(range, tick_hint);
+            double lo = floor(vmin / step) * step;
+            double v;
+            for (v = lo; v <= vmax + step * 0.5; v += step) {
+                double t_val = (v - vmin) / range;
+                int ty = bar_y0 + (int)((1.0 - t_val) * (double)(bar_h - 1) + 0.5);
+                if (ty < bar_y0 || ty >= bar_y0 + bar_h) continue;
+                /* tick line to the left */
+                int tx;
+                for (tx = bar_x0 - tick_len; tx < bar_x0; tx++) {
+                    if (tx >= rect.x0 && tx < rect.x1)
+                        plm__set_pixel(fb, tx, ty, PLM_FG_COLOR);
+                }
+                /* tick label */
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.4g", v);
+                int tw = plm__text_width_s(buf, S);
+                int lx = bar_x0 - tick_len - tick_text_gap - tw;
+                int ly = ty + char_h / 2 - 1;
+                plm__draw_text_s(fb, lx, ly, buf, PLM_FG_COLOR, S);
+            }
+        }
+
+        /* label to the right of the bar (rotated 90° CW) */
+        if (label) {
+            int tw = plm__text_width_s(label, S);
+            int lx = bar_x0 + bar_w + gap;
+            int ly = bar_y0 + (bar_h + tw) / 2;
+            /* draw vertical label character by character */
+            {
+                const char *s = label;
+                int cx = lx, cy = ly;
+                while (*s) {
+                    int ch = (unsigned char)*s;
+                    if (ch >= 32 && ch < 127) {
+                        plm__draw_char_rot90(fb, cx, cy, ch, PLM_FG_COLOR, S);
+                        cy += PLM_FONT_ADVANCE * S;
+                    }
+                    s++;
+                }
+            }
+        }
+    }
+#else  /* PLOTMINI_NO_FONT – draw gradient + border only, no ticks/labels */
+    {
+        int bar_w = rect.x1 - rect.x0;
+        int bar_h = rect.y1 - rect.y0;
+        if (orient == PLM_CBAR_VERTICAL) {
+            bar_w = plm__max(6, bar_w);
+        } else {
+            bar_h = plm__max(6, bar_h);
+        }
+        int dx, dy;
+        for (dy = 0; dy < bar_h; dy++) {
+            for (dx = 0; dx < bar_w; dx++) {
+                float t;
+                if (orient == PLM_CBAR_HORIZONTAL)
+                    t = (float)dx / (float)(bar_w > 1 ? bar_w - 1 : 1);
+                else
+                    t = 1.0f - (float)dy / (float)(bar_h > 1 ? bar_h - 1 : 1);
+                plm_color c = cmap_fn(t);
+                int px = rect.x0 + dx, py = rect.y0 + dy;
+                if (fb->bpp == 4) {
+                    unsigned char *p = fb->pixels + py * fb->stride + px * 4;
+                    p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = c.a;
+                } else {
+                    fb->pixels[py * fb->stride + px] = (unsigned char)(t * 255.0f);
+                }
+            }
+        }
+        /* border */
+        {
+            plm_color border = PLM_FG_COLOR;
+            { plm_irect r = { rect.x0, rect.y0, rect.x0 + bar_w, rect.y0 + 1 }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { rect.x0, rect.y0 + bar_h - 1, rect.x0 + bar_w, rect.y0 + bar_h }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { rect.x0, rect.y0, rect.x0 + 1, rect.y0 + bar_h }; plm_fb_fill_rect(fb, r, border); }
+            { plm_irect r = { rect.x0 + bar_w - 1, rect.y0, rect.x0 + bar_w, rect.y0 + bar_h }; plm_fb_fill_rect(fb, r, border); }
+        }
+    }
+    (void)label; (void)tick_hint;
+#endif /* PLOTMINI_NO_FONT */
 }
 
 /* Public: render a single plot (fills the whole framebuffer). */
