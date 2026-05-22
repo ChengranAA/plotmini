@@ -189,17 +189,17 @@ TEST(autorange_lines_only)
 
     float x[] = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
     float y[] = { 10.0f, 20.0f, 15.0f, 25.0f, 30.0f };
-    plm_plot_add_line(&p, x, y, 5, (plm_line_style){PLM_BLUE, 1.0f, NULL});
+    plm_plot_add_line(&p, x, y, 5, (plm_line_style){PLM_BLUE, 1.0f, NULL, 0});
 
     /* trigger autorange (min==max on init) */
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
                          p.scatters, p.scatter_count,
-                         p.bars, p.bar_count, 0);
+                         p.bars, p.bar_count, p.errorbars, p.errorbar_count, p.bands, p.band_count, p.stems, p.stem_count, 0);
     plm__axis_autorange(&p.y_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
                          p.scatters, p.scatter_count,
-                         p.bars, p.bar_count, 1);
+                         p.bars, p.bar_count, p.errorbars, p.errorbar_count, p.bands, p.band_count, p.stems, p.stem_count, 1);
 
     /* X: 1..5 + 5% padding = 1 - 0.2 .. 5 + 0.2 */
     ASSERT_TRUE(p.x_axis.min < 1.0);
@@ -220,16 +220,16 @@ TEST(autorange_single_value)
 
     float x[] = { 5.0f };
     float y[] = { 7.0f };
-    plm_plot_add_line(&p, x, y, 1, (plm_line_style){PLM_BLUE, 1.0f, NULL});
+    plm_plot_add_line(&p, x, y, 1, (plm_line_style){PLM_BLUE, 1.0f, NULL, 0});
 
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
                          p.scatters, p.scatter_count,
-                         p.bars, p.bar_count, 0);
+                         p.bars, p.bar_count, p.errorbars, p.errorbar_count, p.bands, p.band_count, p.stems, p.stem_count, 0);
     plm__axis_autorange(&p.y_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
                          p.scatters, p.scatter_count,
-                         p.bars, p.bar_count, 1);
+                         p.bars, p.bar_count, p.errorbars, p.errorbar_count, p.bands, p.band_count, p.stems, p.stem_count, 1);
 
     /* single value → hi=lo+1, lo=lo-1 → 4..6 */
     ASSERT_TRUE(p.x_axis.min < 5.0);
@@ -250,7 +250,7 @@ TEST(autorange_no_data)
     plm__axis_autorange(&p.x_axis, p.lines, p.line_count,
                          p.hists, p.hist_count,
                          p.scatters, p.scatter_count,
-                         p.bars, p.bar_count, 0);
+                         p.bars, p.bar_count, p.errorbars, p.errorbar_count, p.bands, p.band_count, p.stems, p.stem_count, 0);
 
     /* no data → defaults to 0..1 */
     ASSERT_EQ(p.x_axis.min, 0.0);

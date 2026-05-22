@@ -37,7 +37,7 @@ int main(void) {
             x[i] = (float)i * 0.1f;
             y[i] = sinf(x[i]) + 0.2f * ((float)rand() / (float)RAND_MAX - 0.5f);
         }
-        plm_line_style s = { PLM_BLUE, 1.0f, "sin(x) + noise" };
+        plm_line_style s = { PLM_BLUE, 1.0f, "sin(x) + noise", 0};
         plm_plot_add_line(&plot, x, y, n, s);
         free(x);
         free(y);
@@ -51,7 +51,7 @@ int main(void) {
             x[i] = (float)i * 0.1f;
             y[i] = cosf(x[i]);
         }
-        plm_line_style s = { PLM_RED, 1.0f, "cos(x)" };
+        plm_line_style s = { PLM_RED, 1.0f, "cos(x)", 0};
         plm_plot_add_line(&plot, x, y, n, s);
         free(x);
         free(y);

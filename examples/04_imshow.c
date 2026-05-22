@@ -10,7 +10,7 @@
 
 int main(void) {
     int img_w, img_h, ch;
-    unsigned char *img = stbi_load("assets/cat.jpeg", &img_w, &img_h, &ch, 1);
+    unsigned char *img = stbi_load("../assets/cat.jpeg", &img_w, &img_h, &ch, 1);
     if (!img) { fprintf(stderr, "failed to load image\n"); return 1; }
 
     const int win_w = 800, win_h = 600;

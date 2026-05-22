@@ -110,6 +110,9 @@ typedef enum plm_scale {
     PLM_CATEGORICAL
 } plm_scale;
 
+/* ---- tick label formatter callback (forward) ----------------------- */
+typedef void (*plm_tick_formatter)(char *buf, int buf_size, double value);
+
 /* ---- axis description ---------------------------------------------- */
 typedef struct plm_axis {
     plm_scale   scale;
@@ -122,13 +125,25 @@ typedef struct plm_axis {
     /* categorical axis (PLM_CATEGORICAL) */
     const char **categories;  /* NULL-terminated array of labels, or NULL */
     int          num_categories; /* number of category labels              */
+    /* custom tick label formatting */
+    plm_tick_formatter tick_formatter; /* if non-NULL, called to format tick labels */
+    int          font_scale;  /* 0 = use PLOTMINI_TEXT_SCALE; >0 = override */
 } plm_axis;
+
+/* ---- step mode (for line plots) ----------------------------------- */
+typedef enum plm_step_mode {
+    PLM_STEP_NONE = 0,  /* normal straight-line connection              */
+    PLM_STEP_PRE,       /* step before: horizontal then vertical        */
+    PLM_STEP_POST,      /* step after:  vertical then horizontal        */
+    PLM_STEP_MID        /* step mid:    vertical-horizontal-vertical    */
+} plm_step_mode;
 
 /* ---- line style ---------------------------------------------------- */
 typedef struct plm_line_style {
-    plm_color    color;
-    float        width;      /* 0.0..N  pixel width  (0 = hairline)    */
-    const char  *legend;     /* optional legend label                   */
+    plm_color      color;
+    float          width;      /* 0.0..N  pixel width  (0 = hairline)  */
+    const char    *legend;     /* optional legend label                 */
+    plm_step_mode  step_mode;  /* PLM_STEP_NONE = normal line          */
 } plm_line_style;
 
 /* ---- line series --------------------------------------------------- */
@@ -165,6 +180,47 @@ typedef struct plm_bar_series {
     plm_bar_style  style;
 } plm_bar_series;
 
+/* ---- error bar style ----------------------------------------------- */
+typedef struct plm_errorbar_style {
+    plm_color    line_color;     /* color for error lines and connecting line */
+    float        line_width;     /* 0 = hairline                              */
+    float        cap_size;       /* cap width in pixels (0 = no caps)         */
+    plm_color    marker_color;   /* marker fill color                         */
+    float        marker_radius;  /* 0 = no markers                            */
+    const char  *legend;
+} plm_errorbar_style;
+
+/* ---- error bar series ---------------------------------------------- */
+typedef struct plm_errorbar_series {
+    const float *x_data;
+    const float *y_data;
+    const float *x_err;       /* symmetric x error, or NULL = no x error      */
+    const float *y_err;       /* symmetric y error, or NULL = no y error      */
+    const float *x_err_low;   /* asymmetric lower x error (NULL → use x_err)  */
+    const float *x_err_high;  /* asymmetric upper x error (NULL → use x_err)  */
+    const float *y_err_low;   /* asymmetric lower y error (NULL → use y_err)  */
+    const float *y_err_high;  /* asymmetric upper y error (NULL → use y_err)  */
+    int          count;
+    plm_errorbar_style style;
+} plm_errorbar_series;
+
+/* ---- band style ---------------------------------------------------- */
+typedef struct plm_band_style {
+    plm_color    fill_color;
+    plm_color    stroke_color;
+    float        stroke_width;  /* 0 = no stroke                             */
+    const char  *legend;
+} plm_band_style;
+
+/* ---- band series (fill between two curves) ------------------------- */
+typedef struct plm_band_series {
+    const float *x_data;
+    const float *y_lower;     /* lower bound                                 */
+    const float *y_upper;     /* upper bound                                 */
+    int          count;
+    plm_band_style style;
+} plm_band_series;
+
 /* ---- scatter series ------------------------------------------------ */
 typedef struct plm_scatter_style {
     plm_color    color;
@@ -179,11 +235,40 @@ typedef struct plm_scatter_series {
     plm_scatter_style   style;
 } plm_scatter_series;
 
+/* ---- stem style ---------------------------------------------------- */
+typedef struct plm_stem_style {
+    plm_color    line_color;     /* color for the vertical stem line          */
+    float        line_width;     /* 0 = hairline                              */
+    plm_color    marker_color;   /* marker fill color                         */
+    float        marker_radius;  /* 0 = no markers                            */
+    const char  *legend;
+} plm_stem_style;
+
+/* ---- stem series --------------------------------------------------- */
+typedef struct plm_stem_series {
+    const float     *x_data;
+    const float     *y_data;
+    int              count;
+    double           baseline;    /* y-value of stem base (default = 0)       */
+    plm_stem_style   style;
+} plm_stem_series;
+
+/* ---- legend position ----------------------------------------------- */
+typedef enum plm_legend_pos {
+    PLM_LEGEND_NONE = 0,      /* no legend                                  */
+    PLM_LEGEND_TOP_RIGHT,     /* inside plot area, top-right corner          */
+    PLM_LEGEND_TOP_LEFT,      /* inside plot area, top-left corner           */
+    PLM_LEGEND_BOTTOM_RIGHT,  /* inside plot area, bottom-right corner       */
+    PLM_LEGEND_BOTTOM_LEFT,   /* inside plot area, bottom-left corner        */
+    PLM_LEGEND_OUTSIDE_RIGHT  /* outside plot area, to the right             */
+} plm_legend_pos;
+
 /* ---- a complete plot description (hybrid retained model) ----------- */
 typedef struct plm_plot {
     /* axes */
     plm_axis     x_axis;
     plm_axis     y_axis;
+    plm_axis     y_axis_right;  /* secondary (right-side) y-axis; min==max disables it */
 
     /* layout (pixels) -- margins can be set or auto-computed (-1)     */
     int          margin_left;
@@ -195,6 +280,10 @@ typedef struct plm_plot {
     const char  *title;
     const char  *x_label;
     const char  *y_label;
+    const char  *y_label_right;  /* label for the right y-axis */
+
+    /* legend */
+    plm_legend_pos  legend_position;  /* PLM_LEGEND_NONE = no legend */
 
     /* series -- these are filled by plm_plot_add_*()                  */
     plm_line_series *lines;
@@ -212,6 +301,18 @@ typedef struct plm_plot {
     plm_bar_series *bars;
     int             bar_count;
     int             bar_cap;     /* internal                           */
+
+    plm_errorbar_series *errorbars;
+    int                  errorbar_count;
+    int                  errorbar_cap;  /* internal                    */
+
+    plm_band_series *bands;
+    int              band_count;
+    int              band_cap;     /* internal                        */
+
+    plm_stem_series *stems;
+    int              stem_count;
+    int              stem_cap;     /* internal                        */
 
     /* internal state (set during render, read-only for user)           */
     plm_irect    plot_area;   /* pixel rect of the data region          */
@@ -295,6 +396,45 @@ void   plm_plot_add_scatter(plm_plot *p,
 void   plm_plot_add_bar(plm_plot *p,
                          const float *x, const float *y, int count,
                          float width, plm_bar_style style);
+
+/* Append an error bar series.  Data is *copied* internally.
+   x_err and y_err may be NULL (no error in that direction).
+   If cap_size > 0, caps are drawn at the end of error bars.
+   If marker_radius > 0, markers are drawn at each data point.         */
+void   plm_plot_add_errorbar(plm_plot *p,
+                              const float *x, const float *y,
+                              const float *x_err, const float *y_err,
+                              int count,
+                              plm_errorbar_style style);
+
+/* Append a band (filled region) between two curves.
+   Data is *copied* internally.  y_lower and y_upper define the
+   lower and upper boundaries of the filled region.                     */
+void   plm_plot_add_band(plm_plot *p,
+                          const float *x, const float *y_lower,
+                          const float *y_upper,
+                          int count,
+                          plm_band_style style);
+
+/* Append an error bar series with asymmetric errors.
+   Data is *copied* internally.
+   Pass NULL for any of x_err_low/x_err_high to skip x error bars;
+   pass NULL for any of y_err_low/y_err_high to skip y error bars.
+   To get symmetric errors in a direction, pass the same array for
+   low and high.                                                        */
+void   plm_plot_add_errorbar_asym(plm_plot *p,
+                                   const float *x, const float *y,
+                                   const float *x_err_low, const float *x_err_high,
+                                   const float *y_err_low, const float *y_err_high,
+                                   int count,
+                                   plm_errorbar_style style);
+
+/* Append a stem series.  Data is *copied* internally.
+   Stems are vertical lines from a baseline (default 0) to each
+   (x, y) data point, with an optional marker at the top.               */
+void   plm_plot_add_stem(plm_plot *p,
+                          const float *x, const float *y, int count,
+                          double baseline, plm_stem_style style);
 
 /* ---- rendering ----------------------------------------------------- */
 
@@ -928,22 +1068,32 @@ static const unsigned char plm__font_data[95 * 5] = {
     /* ~ */ 0x08,0x04,0x08,0x10,0x08,
 };
 
-int plm_text_width(const char *s) {
-    int w = 0;
+static int plm__text_width_s(const char *s, int scale) {
+    int w = 0, S = scale > 0 ? scale : PLOTMINI_TEXT_SCALE;
     while (*s) {
         int ch = (unsigned char)*s;
-        if (ch >= 32 && ch < 127) w += PLM_FONT_ADVANCE * PLOTMINI_TEXT_SCALE;
+        if (ch >= 32 && ch < 127) w += PLM_FONT_ADVANCE * S;
         s++;
     }
     return w;
 }
 
-int plm_text_height(void) {
-    return PLM_FONT_H * PLOTMINI_TEXT_SCALE;
+static int plm__text_height_s(int scale) {
+    int S = scale > 0 ? scale : PLOTMINI_TEXT_SCALE;
+    return PLM_FONT_H * S;
 }
 
-void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
-    const int S = PLOTMINI_TEXT_SCALE;
+int plm_text_width(const char *s) {
+    return plm__text_width_s(s, PLOTMINI_TEXT_SCALE);
+}
+
+int plm_text_height(void) {
+    return plm__text_height_s(PLOTMINI_TEXT_SCALE);
+}
+
+static void plm__draw_text_s(plm_fb *fb, int x, int y, const char *s,
+                              plm_color c, int scale) {
+    int S = scale > 0 ? scale : PLOTMINI_TEXT_SCALE;
     while (*s) {
         int ch = (unsigned char)*s;
         if (ch >= 32 && ch < 127) {
@@ -969,6 +1119,10 @@ void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
         }
         s++;
     }
+}
+
+void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
+    plm__draw_text_s(fb, x, y, s, c, PLOTMINI_TEXT_SCALE);
 }
 
 /* Draw a single character rotated 90° CW at (x,y) which is the
@@ -998,6 +1152,8 @@ static void plm__draw_char_rot90(plm_fb *fb, int x, int y, int ch,
 
 #else /* PLOTMINI_NO_FONT */
 
+static int plm__text_width_s(const char *s, int scale)  { (void)s; (void)scale; return 0; }
+static int plm__text_height_s(int scale)          { (void)scale; return 0; }
 int  plm_text_width(const char *s)  { (void)s; return 0; }
 int  plm_text_height(void)          { return 0; }
 void plm_draw_text(plm_fb *fb, int x, int y, const char *s, plm_color c) {
@@ -1023,10 +1179,10 @@ void plm_plot_init(plm_plot *p) {
     p->x_axis.grid      = 1;  /* major grid lines on by default */
     p->y_axis.grid      = 1;
 
-    p->margin_left      = 60;
-    p->margin_top       = 40;
-    p->margin_right     = 20;
-    p->margin_bottom    = 45;
+    p->margin_left      = 70;
+    p->margin_top       = 48;
+    p->margin_right     = 30;
+    p->margin_bottom    = 55;
 
     p->title   = NULL;
     p->x_label = NULL;
@@ -1034,10 +1190,55 @@ void plm_plot_init(plm_plot *p) {
 }
 
 void plm_plot_reset(plm_plot *p) {
-    if (p->lines) PLOTMINI_FREE(p->lines);
-    if (p->hists) PLOTMINI_FREE(p->hists);
-    if (p->scatters) PLOTMINI_FREE(p->scatters);
-    if (p->bars) PLOTMINI_FREE(p->bars);
+    int i;
+    for (i = 0; i < p->line_count; i++) {
+        PLOTMINI_FREE((void*)p->lines[i].x_data);
+        PLOTMINI_FREE((void*)p->lines[i].y_data);
+    }
+    if (p->lines)     PLOTMINI_FREE(p->lines);
+
+    for (i = 0; i < p->hist_count; i++) {
+        PLOTMINI_FREE((void*)p->hists[i].data);
+    }
+    if (p->hists)     PLOTMINI_FREE(p->hists);
+
+    for (i = 0; i < p->scatter_count; i++) {
+        PLOTMINI_FREE((void*)p->scatters[i].x_data);
+        PLOTMINI_FREE((void*)p->scatters[i].y_data);
+    }
+    if (p->scatters)  PLOTMINI_FREE(p->scatters);
+
+    for (i = 0; i < p->bar_count; i++) {
+        PLOTMINI_FREE((void*)p->bars[i].x_data);
+        PLOTMINI_FREE((void*)p->bars[i].y_data);
+    }
+    if (p->bars)      PLOTMINI_FREE(p->bars);
+
+    for (i = 0; i < p->errorbar_count; i++) {
+        PLOTMINI_FREE((void*)p->errorbars[i].x_data);
+        PLOTMINI_FREE((void*)p->errorbars[i].y_data);
+        PLOTMINI_FREE((void*)p->errorbars[i].x_err);
+        PLOTMINI_FREE((void*)p->errorbars[i].y_err);
+        PLOTMINI_FREE((void*)p->errorbars[i].x_err_low);
+        PLOTMINI_FREE((void*)p->errorbars[i].x_err_high);
+        PLOTMINI_FREE((void*)p->errorbars[i].y_err_low);
+        PLOTMINI_FREE((void*)p->errorbars[i].y_err_high);
+    }
+    if (p->errorbars) PLOTMINI_FREE(p->errorbars);
+
+    for (i = 0; i < p->band_count; i++) {
+        PLOTMINI_FREE((void*)p->bands[i].x_data);
+        PLOTMINI_FREE((void*)p->bands[i].y_lower);
+        PLOTMINI_FREE((void*)p->bands[i].y_upper);
+    }
+    if (p->bands)     PLOTMINI_FREE(p->bands);
+
+    for (i = 0; i < p->stem_count; i++) {
+        PLOTMINI_FREE((void*)p->stems[i].x_data);
+        PLOTMINI_FREE((void*)p->stems[i].y_data);
+    }
+    if (p->stems)     PLOTMINI_FREE(p->stems);
+
     plm_plot_init(p);
 }
 
@@ -1123,6 +1324,126 @@ void plm_plot_add_bar(plm_plot *p,
     bs->style  = style;
 }
 
+void plm_plot_add_errorbar(plm_plot *p,
+                            const float *x, const float *y,
+                            const float *x_err, const float *y_err,
+                            int count,
+                            plm_errorbar_style style) {
+    if (count <= 0) return;
+    if (p->errorbar_count + 1 > p->errorbar_cap) {
+        int new_cap = p->errorbar_cap ? p->errorbar_cap * 2 : 4;
+        p->errorbars = (plm_errorbar_series *)realloc(p->errorbars,
+                             (size_t)new_cap * sizeof(plm_errorbar_series));
+        p->errorbar_cap = new_cap;
+    }
+    plm_errorbar_series *es = &p->errorbars[p->errorbar_count++];
+    es->x_data = (const float *)malloc((size_t)count * sizeof(float));
+    es->y_data = (const float *)malloc((size_t)count * sizeof(float));
+    memcpy((void*)es->x_data, x, (size_t)count * sizeof(float));
+    memcpy((void*)es->y_data, y, (size_t)count * sizeof(float));
+    if (x_err) {
+        es->x_err = (const float *)malloc((size_t)count * sizeof(float));
+        memcpy((void*)es->x_err, x_err, (size_t)count * sizeof(float));
+    } else {
+        es->x_err = NULL;
+    }
+    if (y_err) {
+        es->y_err = (const float *)malloc((size_t)count * sizeof(float));
+        memcpy((void*)es->y_err, y_err, (size_t)count * sizeof(float));
+    } else {
+        es->y_err = NULL;
+    }
+    es->x_err_low  = NULL;
+    es->x_err_high = NULL;
+    es->y_err_low  = NULL;
+    es->y_err_high = NULL;
+    es->count = count;
+    es->style = style;
+}
+
+void plm_plot_add_errorbar_asym(plm_plot *p,
+                                 const float *x, const float *y,
+                                 const float *x_err_low, const float *x_err_high,
+                                 const float *y_err_low, const float *y_err_high,
+                                 int count,
+                                 plm_errorbar_style style) {
+    if (count <= 0) return;
+    if (p->errorbar_count + 1 > p->errorbar_cap) {
+        int new_cap = p->errorbar_cap ? p->errorbar_cap * 2 : 4;
+        p->errorbars = (plm_errorbar_series *)realloc(p->errorbars,
+                             (size_t)new_cap * sizeof(plm_errorbar_series));
+        p->errorbar_cap = new_cap;
+    }
+    plm_errorbar_series *es = &p->errorbars[p->errorbar_count++];
+    es->x_data = (const float *)malloc((size_t)count * sizeof(float));
+    es->y_data = (const float *)malloc((size_t)count * sizeof(float));
+    memcpy((void*)es->x_data, x, (size_t)count * sizeof(float));
+    memcpy((void*)es->y_data, y, (size_t)count * sizeof(float));
+    es->x_err = NULL;
+    es->y_err = NULL;
+    if (x_err_low) {
+        es->x_err_low = (const float *)malloc((size_t)count * sizeof(float));
+        memcpy((void*)es->x_err_low, x_err_low, (size_t)count * sizeof(float));
+    } else { es->x_err_low = NULL; }
+    if (x_err_high) {
+        es->x_err_high = (const float *)malloc((size_t)count * sizeof(float));
+        memcpy((void*)es->x_err_high, x_err_high, (size_t)count * sizeof(float));
+    } else { es->x_err_high = NULL; }
+    if (y_err_low) {
+        es->y_err_low = (const float *)malloc((size_t)count * sizeof(float));
+        memcpy((void*)es->y_err_low, y_err_low, (size_t)count * sizeof(float));
+    } else { es->y_err_low = NULL; }
+    if (y_err_high) {
+        es->y_err_high = (const float *)malloc((size_t)count * sizeof(float));
+        memcpy((void*)es->y_err_high, y_err_high, (size_t)count * sizeof(float));
+    } else { es->y_err_high = NULL; }
+    es->count = count;
+    es->style = style;
+}
+
+void plm_plot_add_stem(plm_plot *p,
+                        const float *x, const float *y, int count,
+                        double baseline, plm_stem_style style) {
+    if (count <= 0) return;
+    if (p->stem_count + 1 > p->stem_cap) {
+        int new_cap = p->stem_cap ? p->stem_cap * 2 : 4;
+        p->stems = (plm_stem_series *)realloc(p->stems,
+                        (size_t)new_cap * sizeof(plm_stem_series));
+        p->stem_cap = new_cap;
+    }
+    plm_stem_series *ss = &p->stems[p->stem_count++];
+    ss->x_data = (const float *)malloc((size_t)count * sizeof(float));
+    ss->y_data = (const float *)malloc((size_t)count * sizeof(float));
+    memcpy((void*)ss->x_data, x, (size_t)count * sizeof(float));
+    memcpy((void*)ss->y_data, y, (size_t)count * sizeof(float));
+    ss->count    = count;
+    ss->baseline = baseline;
+    ss->style    = style;
+}
+
+void plm_plot_add_band(plm_plot *p,
+                        const float *x, const float *y_lower,
+                        const float *y_upper,
+                        int count,
+                        plm_band_style style) {
+    if (count <= 0) return;
+    if (p->band_count + 1 > p->band_cap) {
+        int new_cap = p->band_cap ? p->band_cap * 2 : 4;
+        p->bands = (plm_band_series *)realloc(p->bands,
+                        (size_t)new_cap * sizeof(plm_band_series));
+        p->band_cap = new_cap;
+    }
+    plm_band_series *bs = &p->bands[p->band_count++];
+    bs->x_data   = (const float *)malloc((size_t)count * sizeof(float));
+    bs->y_lower  = (const float *)malloc((size_t)count * sizeof(float));
+    bs->y_upper  = (const float *)malloc((size_t)count * sizeof(float));
+    memcpy((void*)bs->x_data,   x,        (size_t)count * sizeof(float));
+    memcpy((void*)bs->y_lower,  y_lower,  (size_t)count * sizeof(float));
+    memcpy((void*)bs->y_upper,  y_upper,  (size_t)count * sizeof(float));
+    bs->count = count;
+    bs->style = style;
+}
+
 /* ---- auto-range ---------------------------------------------------- */
 
 static void plm__axis_autorange(plm_axis *ax,
@@ -1130,6 +1451,9 @@ static void plm__axis_autorange(plm_axis *ax,
                                  const plm_hist_series *hists, int hc,
                                  const plm_scatter_series *scatters, int sc,
                                  const plm_bar_series *bars, int bc,
+                                 const plm_errorbar_series *errorbars, int ebc,
+                                 const plm_band_series *bands, int bdc,
+                                 const plm_stem_series *stems, int stc,
                                  int is_y) {
     /* categorical axis: use category count if available */
     if (ax->scale == PLM_CATEGORICAL && ax->num_categories > 0) {
@@ -1185,6 +1509,98 @@ static void plm__axis_autorange(plm_axis *ax,
             for (j = 0; j < bars[i].count; j++) {
                 float v = bars[i].y_data[j];
                 if (!plm__isnan(v)) {
+                    if ((double)v > hi) hi = (double)v;
+                    found = 1;
+                }
+            }
+        }
+    }
+
+    /* errorbar series (symmetric + asymmetric) */
+    for (i = 0; i < ebc; i++) {
+        const float *data = is_y ? errorbars[i].y_data : errorbars[i].x_data;
+        int j;
+        for (j = 0; j < errorbars[i].count; j++) {
+            float v = data[j];
+            if (!plm__isnan(v)) {
+                if ((double)v < lo) lo = (double)v;
+                if ((double)v > hi) hi = (double)v;
+                found = 1;
+            }
+            if (is_y) {
+                double err_lo = 0.0, err_hi = 0.0;
+                if (errorbars[i].y_err_low && !plm__isnan(errorbars[i].y_err_low[j]))
+                    err_lo = (double)errorbars[i].y_err_low[j];
+                else if (errorbars[i].y_err && !plm__isnan(errorbars[i].y_err[j]))
+                    err_lo = (double)errorbars[i].y_err[j];
+                if (errorbars[i].y_err_high && !plm__isnan(errorbars[i].y_err_high[j]))
+                    err_hi = (double)errorbars[i].y_err_high[j];
+                else if (errorbars[i].y_err && !plm__isnan(errorbars[i].y_err[j]))
+                    err_hi = (double)errorbars[i].y_err[j];
+                double hi2 = (double)v + err_hi;
+                double lo2 = (double)v - err_lo;
+                if (hi2 > hi) hi = hi2;
+                if (lo2 < lo) lo = lo2;
+            } else {
+                double err_lo = 0.0, err_hi = 0.0;
+                if (errorbars[i].x_err_low && !plm__isnan(errorbars[i].x_err_low[j]))
+                    err_lo = (double)errorbars[i].x_err_low[j];
+                else if (errorbars[i].x_err && !plm__isnan(errorbars[i].x_err[j]))
+                    err_lo = (double)errorbars[i].x_err[j];
+                if (errorbars[i].x_err_high && !plm__isnan(errorbars[i].x_err_high[j]))
+                    err_hi = (double)errorbars[i].x_err_high[j];
+                else if (errorbars[i].x_err && !plm__isnan(errorbars[i].x_err[j]))
+                    err_hi = (double)errorbars[i].x_err[j];
+                double hi2 = (double)v + err_hi;
+                double lo2 = (double)v - err_lo;
+                if (hi2 > hi) hi = hi2;
+                if (lo2 < lo) lo = lo2;
+            }
+        }
+    }
+
+    /* stem series */
+    for (i = 0; i < stc; i++) {
+        const float *data = is_y ? stems[i].y_data : stems[i].x_data;
+        int j;
+        for (j = 0; j < stems[i].count; j++) {
+            float v = data[j];
+            if (!plm__isnan(v)) {
+                if ((double)v < lo) lo = (double)v;
+                if ((double)v > hi) hi = (double)v;
+                found = 1;
+            }
+        }
+        if (is_y) {
+            double bl = stems[i].baseline;
+            if (bl < lo) lo = bl;
+            if (bl > hi) hi = bl;
+        }
+    }
+
+    /* band series */
+    for (i = 0; i < bdc; i++) {
+        int j;
+        if (is_y) {
+            for (j = 0; j < bands[i].count; j++) {
+                float vl = bands[i].y_lower[j];
+                float vu = bands[i].y_upper[j];
+                if (!plm__isnan(vl)) {
+                    if ((double)vl < lo) lo = (double)vl;
+                    if ((double)vl > hi) hi = (double)vl;
+                    found = 1;
+                }
+                if (!plm__isnan(vu)) {
+                    if ((double)vu < lo) lo = (double)vu;
+                    if ((double)vu > hi) hi = (double)vu;
+                    found = 1;
+                }
+            }
+        } else {
+            for (j = 0; j < bands[i].count; j++) {
+                float v = bands[i].x_data[j];
+                if (!plm__isnan(v)) {
+                    if ((double)v < lo) lo = (double)v;
                     if ((double)v > hi) hi = (double)v;
                     found = 1;
                 }
@@ -1248,10 +1664,22 @@ static void plm__axis_autorange(plm_axis *ax,
         lo = lo - 1.0;
     }
     if (found) {
-        double pad = (hi - lo) * 0.05;
-        if (pad < 1e-12) pad = 1.0;
-        ax->min = lo - pad;
-        ax->max = hi + pad;
+        if (ax->scale == PLM_LOG) {
+            /* log scale: ensure min > 0, use multiplicative padding */
+            if (lo <= 0.0) lo = hi * 0.001;
+            if (lo <= 0.0) lo = 1e-6;
+            double log_lo = log10(lo);
+            double log_hi = log10(hi);
+            double log_pad = (log_hi - log_lo) * 0.05;
+            if (log_pad < 0.02) log_pad = 0.02;
+            ax->min = pow(10.0, log_lo - log_pad);
+            ax->max = pow(10.0, log_hi + log_pad);
+        } else {
+            double pad = (hi - lo) * 0.05;
+            if (pad < 1e-12) pad = 1.0;
+            ax->min = lo - pad;
+            ax->max = hi + pad;
+        }
     } else {
         ax->min = 0.0;
         ax->max = 1.0;
@@ -1286,12 +1714,29 @@ static double plm__nice_step(double range, int target_intervals) {
    Returns a float pixel coordinate.
 */
 static float plm__map_x(const plm_plot *p, double val) {
-    double t = (val - p->x_axis.min) / (p->x_axis.max - p->x_axis.min);
+    double t;
+    if (p->x_axis.scale == PLM_LOG) {
+        double log_min = log10(p->x_axis.min);
+        double log_max = log10(p->x_axis.max);
+        double log_val = log10(val > 0.0 ? val : p->x_axis.min);
+        t = (log_val - log_min) / (log_max - log_min);
+    } else {
+        t = (val - p->x_axis.min) / (p->x_axis.max - p->x_axis.min);
+    }
     return (float)(p->plot_area.x0 + t * (p->plot_area.x1 - p->plot_area.x0));
 }
 
 static float plm__map_y(const plm_plot *p, double val) {
-    double t = (val - p->y_axis.min) / (p->y_axis.max - p->y_axis.min);
+    double t;
+    plm_axis ax = p->y_axis;
+    if (ax.scale == PLM_LOG) {
+        double log_min = log10(ax.min);
+        double log_max = log10(ax.max);
+        double log_val = log10(val > 0.0 ? val : ax.min);
+        t = (log_val - log_min) / (log_max - log_min);
+    } else {
+        t = (val - ax.min) / (ax.max - ax.min);
+    }
     /* Y is flipped: data min -> pixel bottom */
     return (float)(p->plot_area.y1 - 1 - t * (p->plot_area.y1 - p->plot_area.y0));
 }
@@ -1309,13 +1754,121 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         plm__axis_autorange(&p->x_axis, p->lines, p->line_count,
                              p->hists, p->hist_count,
                              p->scatters, p->scatter_count,
-                             p->bars, p->bar_count, 0);
+                             p->bars, p->bar_count,
+                             p->errorbars, p->errorbar_count,
+                             p->bands, p->band_count,
+                             p->stems, p->stem_count, 0);
     }
     if (p->y_axis.min == p->y_axis.max) {
         plm__axis_autorange(&p->y_axis, p->lines, p->line_count,
                              p->hists, p->hist_count,
                              p->scatters, p->scatter_count,
-                             p->bars, p->bar_count, 1);
+                             p->bars, p->bar_count,
+                             p->errorbars, p->errorbar_count,
+                             p->bands, p->band_count,
+                             p->stems, p->stem_count, 1);
+    }
+    /* autorange for right y-axis (if enabled) */
+    if (p->y_axis_right.min == p->y_axis_right.max &&
+        (p->y_axis_right.scale != PLM_LINEAR ||
+         p->y_axis_right.tick_hint != 0 ||
+         p->y_axis_right.label != NULL)) {
+        plm__axis_autorange(&p->y_axis_right, p->lines, p->line_count,
+                             p->hists, p->hist_count,
+                             p->scatters, p->scatter_count,
+                             p->bars, p->bar_count,
+                             p->errorbars, p->errorbar_count,
+                             p->bands, p->band_count,
+                             p->stems, p->stem_count, 1);
+    }
+
+    /* 1b. pre-scan labels to expand margins if needed */
+    {
+        const int S = PLOTMINI_TEXT_SCALE;
+        int y_fs   = p->y_axis.font_scale > 0 ? p->y_axis.font_scale : S;
+        int ry_fs  = p->y_axis_right.font_scale > 0 ? p->y_axis_right.font_scale : S;
+        int char_w = PLM_FONT_H * S;
+        int tick_len = 4 * S;
+        int gap      = 3 * S;
+
+        int max_ytick_w = 0;
+        {
+            if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
+                int ci;
+                for (ci = 0; ci < p->y_axis.num_categories; ci++) {
+                    const char *label = p->y_axis.categories
+                                        ? p->y_axis.categories[ci] : NULL;
+                    char buf[32];
+                    if (!label) { snprintf(buf, sizeof(buf), "%d", ci); label = buf; }
+                    int w = plm__text_width_s(label, y_fs);
+                    if (w > max_ytick_w) max_ytick_w = w;
+                }
+            } else if (p->y_axis.scale == PLM_LOG) {
+                double log_min = log10(p->y_axis.min);
+                double log_max = log10(p->y_axis.max);
+                double v;
+                for (v = floor(log_min); v <= log_max + 0.5; v += 1.0) {
+                    double val = pow(10.0, v);
+                    char buf[32];
+                    if (p->y_axis.tick_formatter)
+                        p->y_axis.tick_formatter(buf, sizeof(buf), val);
+                    else snprintf(buf, sizeof(buf), "%.4g", val);
+                    int w = plm__text_width_s(buf, y_fs);
+                    if (w > max_ytick_w) max_ytick_w = w;
+                }
+            } else {
+                double range = p->y_axis.max - p->y_axis.min;
+                if (range > 0.0) {
+                    double step = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
+                                                 p->y_axis.tick_hint : 5);
+                    double lo = floor(p->y_axis.min / step) * step;
+                    double v;
+                    for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
+                        char buf[32];
+                        if (p->y_axis.tick_formatter)
+                            p->y_axis.tick_formatter(buf, sizeof(buf), v);
+                        else snprintf(buf, sizeof(buf), "%.4g", v);
+                        int w = plm__text_width_s(buf, y_fs);
+                        if (w > max_ytick_w) max_ytick_w = w;
+                    }
+                }
+            }
+        }
+
+        int max_rytick_w = 0;
+        int has_right = (p->y_axis_right.min != p->y_axis_right.max ||
+                         p->y_axis_right.label != NULL ||
+                         p->y_label_right != NULL);
+        if (has_right) {
+            double range = p->y_axis_right.max - p->y_axis_right.min;
+            if (range <= 0.0) range = 1.0;
+            double step = plm__nice_step(range, p->y_axis_right.tick_hint > 0 ?
+                                         p->y_axis_right.tick_hint : 5);
+            double lo = floor(p->y_axis_right.min / step) * step;
+            double v;
+            for (v = lo; v <= p->y_axis_right.max + step * 0.5; v += step) {
+                char buf[32];
+                if (p->y_axis_right.tick_formatter)
+                    p->y_axis_right.tick_formatter(buf, sizeof(buf), v);
+                else snprintf(buf, sizeof(buf), "%.4g", v);
+                int w = plm__text_width_s(buf, ry_fs);
+                if (w > max_rytick_w) max_rytick_w = w;
+            }
+        }
+
+        /* expand margins so labels fit */
+        {
+            int need_left = gap + char_w + gap + max_ytick_w + gap + tick_len;
+            if (p->y_label && need_left > p->margin_left)
+                p->margin_left = need_left;
+            else if (max_ytick_w + gap + tick_len > p->margin_left)
+                p->margin_left = max_ytick_w + gap + tick_len;
+        }
+        if (has_right) {
+            int need_right = tick_len + gap + max_rytick_w + gap + char_w + gap;
+            if (need_right > p->margin_right)
+                p->margin_right = need_right;
+        }
     }
 
     /* 2. compute plot area in pixels (inset from cell by margins) */
@@ -1404,7 +1957,7 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
-    /* 6. draw axis spines (the L-shape) */
+    /* 6. draw axis spines (the L-shape, plus right if y_axis_right enabled) */
     {
         plm_color ax_c = PLM_FG_COLOR;
         /* bottom */
@@ -1415,6 +1968,148 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         { plm_irect r = { p->plot_area.x0, p->plot_area.y0,
                           p->plot_area.x0 + 1, p->plot_area.y1 };
           plm_fb_fill_rect(fb, r, ax_c); }
+        /* right (secondary y-axis) */
+        if (p->y_axis_right.min != p->y_axis_right.max ||
+            p->y_axis_right.label != NULL) {
+            { plm_irect r = { p->plot_area.x1 - 1, p->plot_area.y0,
+                              p->plot_area.x1, p->plot_area.y1 };
+              plm_fb_fill_rect(fb, r, ax_c); }
+        }
+    }
+
+    /* 6b. draw band series (fill between two curves) */
+    {
+        int si;
+        for (si = 0; si < p->band_count; si++) {
+            const plm_band_series *bs = &p->bands[si];
+            if (bs->count < 2) continue;
+            int n = bs->count, i;
+            float band_ymin = 1e9f, band_ymax = -1e9f;
+            float *poly_x = (float *)malloc((size_t)(2*n) * sizeof(float));
+            float *poly_y = (float *)malloc((size_t)(2*n) * sizeof(float));
+            if (!poly_x || !poly_y) {
+                if (poly_x) free(poly_x);
+                if (poly_y) free(poly_y);
+                continue;
+            }
+            int pcount = 0;
+            /* upper curve left to right */
+            for (i = 0; i < n; i++) {
+                if (plm__isnan(bs->x_data[i]) ||
+                    plm__isnan(bs->y_upper[i])) continue;
+                float px = plm__map_x(p, bs->x_data[i]);
+                float py = plm__map_y(p, bs->y_upper[i]);
+                poly_x[pcount] = px; poly_y[pcount] = py;
+                if (py < band_ymin) band_ymin = py;
+                if (py > band_ymax) band_ymax = py;
+                pcount++;
+            }
+            /* lower curve right to left */
+            for (i = n - 1; i >= 0; i--) {
+                if (plm__isnan(bs->x_data[i]) ||
+                    plm__isnan(bs->y_lower[i])) continue;
+                float px = plm__map_x(p, bs->x_data[i]);
+                float py = plm__map_y(p, bs->y_lower[i]);
+                poly_x[pcount] = px; poly_y[pcount] = py;
+                if (py < band_ymin) band_ymin = py;
+                if (py > band_ymax) band_ymax = py;
+                pcount++;
+            }
+            if (pcount < 3) { free(poly_x); free(poly_y); continue; }
+            /* clip to plot area */
+            int scan_y0 = (int)band_ymin;
+            int scan_y1 = (int)(band_ymax + 0.9999f);
+            if (scan_y0 < p->plot_area.y0) scan_y0 = p->plot_area.y0;
+            if (scan_y1 > p->plot_area.y1) scan_y1 = p->plot_area.y1;
+            /* scanline fill (pre-allocate intersection buffer once) */
+            {
+                int y;
+                float *ix_vals = (float *)malloc((size_t)pcount *
+                                                 sizeof(float));
+                if (!ix_vals) { free(poly_x); free(poly_y); continue; }
+                for (y = scan_y0; y < scan_y1; y++) {
+                    int ix_count = 0;
+                    int j;
+                    for (j = 0; j < pcount; j++) {
+                        int j2 = (j + 1) % pcount;
+                        float y0 = poly_y[j], y1 = poly_y[j2];
+                        float x0 = poly_x[j], x1 = poly_x[j2];
+                        float sy = (float)y + 0.5f;
+                        if ((y0 <= sy && y1 > sy) ||
+                            (y1 <= sy && y0 > sy)) {
+                            float t = (sy - y0) / (y1 - y0);
+                            ix_vals[ix_count++] = x0 + t * (x1 - x0);
+                        }
+                    }
+                    /* sort (bubble, small n) */
+                    { int a, b;
+                      for (a = 0; a < ix_count-1; a++)
+                        for (b = a+1; b < ix_count; b++)
+                          if (ix_vals[a] > ix_vals[b]) {
+                            float t = ix_vals[a];
+                            ix_vals[a] = ix_vals[b];
+                            ix_vals[b] = t;
+                          }
+                    }
+                    /* fill pairs */
+                    { int k;
+                      for (k = 0; k + 1 < ix_count; k += 2) {
+                        float xl = ix_vals[k], xr = ix_vals[k+1];
+                        if (xl < (float)p->plot_area.x0)
+                            xl = (float)p->plot_area.x0;
+                        if (xr > (float)p->plot_area.x1)
+                            xr = (float)p->plot_area.x1;
+                        int xli = (int)xl, xri = (int)(xr+0.9999f);
+                        int x;
+                        for (x = xli; x < xri; x++)
+                            plm__blend_pixel(fb, x, y,
+                                bs->style.fill_color,
+                                bs->style.fill_color.a);
+                      }
+                    }
+                }
+                free(ix_vals);
+            }
+            /* stroke boundaries */
+            if (bs->style.stroke_width > 0.0f) {
+                plm_color sc = bs->style.stroke_color;
+                float sw = bs->style.stroke_width;
+                /* upper */
+                { int seg_start = -1;
+                  for (i = 0; i < n; i++) {
+                    if (plm__isnan(bs->x_data[i]) ||
+                        plm__isnan(bs->y_upper[i]))
+                        { seg_start = -1; continue; }
+                    if (seg_start >= 0) {
+                        float px0=plm__map_x(p,bs->x_data[i-1]);
+                        float py0=plm__map_y(p,bs->y_upper[i-1]);
+                        float px1=plm__map_x(p,bs->x_data[i]);
+                        float py1=plm__map_y(p,bs->y_upper[i]);
+                        plm__wu_line_thick(fb,px0,py0,px1,py1,sc,sw);
+                    }
+                    if (seg_start < 0) seg_start = i;
+                  }
+                }
+                /* lower */
+                { int seg_start = -1;
+                  for (i = 0; i < n; i++) {
+                    if (plm__isnan(bs->x_data[i]) ||
+                        plm__isnan(bs->y_lower[i]))
+                        { seg_start = -1; continue; }
+                    if (seg_start >= 0) {
+                        float px0=plm__map_x(p,bs->x_data[i-1]);
+                        float py0=plm__map_y(p,bs->y_lower[i-1]);
+                        float px1=plm__map_x(p,bs->x_data[i]);
+                        float py1=plm__map_y(p,bs->y_lower[i]);
+                        plm__wu_line_thick(fb,px0,py0,px1,py1,sc,sw);
+                    }
+                    if (seg_start < 0) seg_start = i;
+                  }
+                }
+            }
+            free(poly_x);
+            free(poly_y);
+        }
     }
 
     /* 7. draw line series */
@@ -1424,25 +2119,91 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
             const plm_line_series *ls = &p->lines[si];
             int i;
             int seg_start = -1;
+            float prev_px = 0.0f, prev_py = 0.0f;
             for (i = 0; i < ls->count; i++) {
                 /* NaN gap handling */
                 if (plm__isnan(ls->x_data[i]) || plm__isnan(ls->y_data[i])) {
                     seg_start = -1;
                     continue;
                 }
+                float px = plm__map_x(p, ls->x_data[i]);
+                float py = plm__map_y(p, ls->y_data[i]);
                 if (seg_start >= 0) {
-                    float px0 = plm__map_x(p, ls->x_data[i-1]);
-                    float py0 = plm__map_y(p, ls->y_data[i-1]);
-                    float px1 = plm__map_x(p, ls->x_data[i]);
-                    float py1 = plm__map_y(p, ls->y_data[i]);
-                    if (plm__clip_line_f(&px0, &py0, &px1, &py1,
-                                         (float)p->plot_area.x0, (float)p->plot_area.y0,
-                                         (float)(p->plot_area.x1 - 1),
-                                         (float)(p->plot_area.y1 - 1))) {
-                        plm__wu_line_thick(fb, px0, py0, px1, py1,
-                                           ls->style.color, ls->style.width);
+                    if (ls->style.step_mode == PLM_STEP_NONE) {
+                        float px0 = prev_px, py0 = prev_py;
+                        float px1 = px, py1 = py;
+                        if (plm__clip_line_f(&px0, &py0, &px1, &py1,
+                                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                                             (float)(p->plot_area.x1 - 1.5f),
+                                             (float)(p->plot_area.y1 - 1.5f))) {
+                            plm__wu_line_thick(fb, px0, py0, px1, py1,
+                                               ls->style.color, ls->style.width);
+                        }
+                    } else if (ls->style.step_mode == PLM_STEP_PRE) {
+                        /* horizontal then vertical */
+                        float hx0 = prev_px, hy0 = prev_py;
+                        float hx1 = px,      hy1 = prev_py;
+                        if (plm__clip_line_f(&hx0, &hy0, &hx1, &hy1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, hx0, hy0, hx1, hy1,
+                                               ls->style.color, ls->style.width);
+                        float vx0 = px, vy0 = prev_py;
+                        float vx1 = px, vy1 = py;
+                        if (plm__clip_line_f(&vx0, &vy0, &vx1, &vy1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, vx0, vy0, vx1, vy1,
+                                               ls->style.color, ls->style.width);
+                    } else if (ls->style.step_mode == PLM_STEP_POST) {
+                        /* vertical then horizontal */
+                        float vx0 = prev_px, vy0 = prev_py;
+                        float vx1 = prev_px, vy1 = py;
+                        if (plm__clip_line_f(&vx0, &vy0, &vx1, &vy1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, vx0, vy0, vx1, vy1,
+                                               ls->style.color, ls->style.width);
+                        float hx0 = prev_px, hy0 = py;
+                        float hx1 = px,      hy1 = py;
+                        if (plm__clip_line_f(&hx0, &hy0, &hx1, &hy1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, hx0, hy0, hx1, hy1,
+                                               ls->style.color, ls->style.width);
+                    } else { /* PLM_STEP_MID */
+                        float mid_x = (prev_px + px) * 0.5f;
+                        float vx0 = prev_px, vy0 = prev_py;
+                        float vx1 = mid_x,   vy1 = prev_py;
+                        if (plm__clip_line_f(&vx0, &vy0, &vx1, &vy1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, vx0, vy0, vx1, vy1,
+                                               ls->style.color, ls->style.width);
+                        float hx0 = mid_x, hy0 = prev_py;
+                        float hx1 = mid_x, hy1 = py;
+                        if (plm__clip_line_f(&hx0, &hy0, &hx1, &hy1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, hx0, hy0, hx1, hy1,
+                                               ls->style.color, ls->style.width);
+                        float vx0b = mid_x, vy0b = py;
+                        float vx1b = px,    vy1b = py;
+                        if (plm__clip_line_f(&vx0b, &vy0b, &vx1b, &vy1b,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1 - 1.5f),
+                             (float)(p->plot_area.y1 - 1.5f)))
+                            plm__wu_line_thick(fb, vx0b, vy0b, vx1b, vy1b,
+                                               ls->style.color, ls->style.width);
                     }
                 }
+                prev_px = px; prev_py = py;
                 if (seg_start < 0) seg_start = i;
             }
         }
@@ -1635,123 +2396,714 @@ static void plm__render_plot_into(plm_plot *p, plm_fb *fb,
         }
     }
 
-    /* 10. draw title (centred in top margin) */
-    if (p->title) {
-        int tw = plm_text_width(p->title);
-        int cx = cell_x0 + (cell_x1 - cell_x0) / 2;
-        int th = plm_text_height();
-        int ty = cell_y0 + (p->margin_top > 0 ? p->margin_top : 30) / 2 + th / 2;
-        plm_draw_text(fb, cx - tw / 2, ty, p->title, PLM_FG_COLOR);
+    /* 9b2. draw stem series */
+    {
+        int si;
+        for (si = 0; si < p->stem_count; si++) {
+            const plm_stem_series *ss = &p->stems[si];
+            if (ss->count <= 0) continue;
+            plm_color lc = ss->style.line_color;
+            float    lw = ss->style.line_width;
+            float baseline_px = plm__map_y(p, ss->baseline);
+            int i;
+            for (i = 0; i < ss->count; i++) {
+                if (plm__isnan(ss->x_data[i]) ||
+                    plm__isnan(ss->y_data[i])) continue;
+                float px = plm__map_x(p, ss->x_data[i]);
+                float py = plm__map_y(p, ss->y_data[i]);
+                /* vertical stem line */
+                if (lw > 0.0f) {
+                    float y0 = baseline_px, y1 = py;
+                    if (y0 > y1) { float t = y0; y0 = y1; y1 = t; }
+                    if (y0 < (float)p->plot_area.y0) y0 = (float)p->plot_area.y0;
+                    if (y1 > (float)(p->plot_area.y1 - 1.5f)) y1 = (float)(p->plot_area.y1 - 1.5f);
+                    if (y0 <= y1)
+                        plm__wu_line_thick(fb, px, y0, px, y1, lc, lw);
+                }
+                /* marker at top */
+                if (ss->style.marker_radius > 0.0f) {
+                    int ix = (int)(px + 0.5f);
+                    int iy = (int)(py + 0.5f);
+                    if (ix >= p->plot_area.x0 && ix < p->plot_area.x1 &&
+                        iy >= p->plot_area.y0 && iy < p->plot_area.y1)
+                        plm__fill_circle(fb, ix, iy,
+                            ss->style.marker_radius,
+                            ss->style.marker_color);
+                }
+            }
+        }
     }
 
-    /* 11. draw axis labels */
-    if (p->x_label) {
-        int tw = plm_text_width(p->x_label);
-        int cx = p->plot_area.x0 + (p->plot_area.x1 - p->plot_area.x0) / 2;
-        int th = plm_text_height();
-        int ty = cell_y1 - (p->margin_bottom > 0 ? p->margin_bottom : 40) / 2 + th / 2;
-        plm_draw_text(fb, cx - tw / 2, ty, p->x_label, PLM_FG_COLOR);
+    /* 9c. draw error bar series */
+    {
+        int si;
+        for (si = 0; si < p->errorbar_count; si++) {
+            const plm_errorbar_series *es = &p->errorbars[si];
+            if (es->count <= 0) continue;
+            plm_color lc = es->style.line_color;
+            float    lw = es->style.line_width;
+            float    cap = es->style.cap_size * 0.5f;
+            /* connecting line */
+            {
+                int i, seg_start = -1;
+                for (i = 0; i < es->count; i++) {
+                    if (plm__isnan(es->x_data[i]) ||
+                        plm__isnan(es->y_data[i]))
+                        { seg_start = -1; continue; }
+                    if (seg_start >= 0) {
+                        float px0 = plm__map_x(p, es->x_data[i-1]);
+                        float py0 = plm__map_y(p, es->y_data[i-1]);
+                        float px1 = plm__map_x(p, es->x_data[i]);
+                        float py1 = plm__map_y(p, es->y_data[i]);
+                        if (plm__clip_line_f(&px0, &py0, &px1, &py1,
+                             (float)p->plot_area.x0, (float)p->plot_area.y0,
+                             (float)(p->plot_area.x1-1),
+                             (float)(p->plot_area.y1-1)))
+                            plm__wu_line_thick(fb, px0, py0, px1, py1, lc, lw);
+                    }
+                    if (seg_start < 0) seg_start = i;
+                }
+            }
+            /* error bars per point */
+            {
+                int i;
+                for (i = 0; i < es->count; i++) {
+                    if (plm__isnan(es->x_data[i]) ||
+                        plm__isnan(es->y_data[i])) continue;
+                    float px = plm__map_x(p, es->x_data[i]);
+                    float py = plm__map_y(p, es->y_data[i]);
+                    /* y error bars (asymmetric, fall back to symmetric) */
+                    {
+                        float y_err_lo = 0.0f, y_err_hi = 0.0f;
+                        int has_y = 0;
+                        if (es->y_err_low && !plm__isnan(es->y_err_low[i]))
+                            { y_err_lo = es->y_err_low[i]; has_y = 1; }
+                        else if (es->y_err && !plm__isnan(es->y_err[i]))
+                            { y_err_lo = es->y_err[i]; has_y = 1; }
+                        if (es->y_err_high && !plm__isnan(es->y_err_high[i]))
+                            { y_err_hi = es->y_err_high[i]; has_y = 1; }
+                        else if (es->y_err && !plm__isnan(es->y_err[i]))
+                            { y_err_hi = es->y_err[i]; has_y = 1; }
+                        if (has_y && (y_err_lo > 0.0f || y_err_hi > 0.0f)) {
+                            float ylo = plm__map_y(p,
+                                (double)es->y_data[i] - (double)y_err_lo);
+                            float yhi = plm__map_y(p,
+                                (double)es->y_data[i] + (double)y_err_hi);
+                            float ymin = (float)p->plot_area.y0;
+                            float ymax = (float)(p->plot_area.y1 - 1.5f);
+                            if (ylo < ymin) ylo = ymin;
+                            if (ylo > ymax) ylo = ymax;
+                            if (yhi < ymin) yhi = ymin;
+                            if (yhi > ymax) yhi = ymax;
+                            plm__wu_line_thick(fb, px, ylo, px, yhi, lc, lw);
+                            if (cap > 0.0f) {
+                                float x0 = px - cap, x1 = px + cap;
+                                if (x0 < (float)p->plot_area.x0)
+                                    x0 = (float)p->plot_area.x0;
+                                if (x1 > (float)(p->plot_area.x1-1))
+                                    x1 = (float)(p->plot_area.x1-1);
+                                plm__wu_line_thick(fb, x0, ylo, x1, ylo, lc, lw);
+                                plm__wu_line_thick(fb, x0, yhi, x1, yhi, lc, lw);
+                            }
+                        }
+                    }
+                    /* x error bars (asymmetric, fall back to symmetric) */
+                    {
+                        float x_err_lo = 0.0f, x_err_hi = 0.0f;
+                        int has_x = 0;
+                        if (es->x_err_low && !plm__isnan(es->x_err_low[i]))
+                            { x_err_lo = es->x_err_low[i]; has_x = 1; }
+                        else if (es->x_err && !plm__isnan(es->x_err[i]))
+                            { x_err_lo = es->x_err[i]; has_x = 1; }
+                        if (es->x_err_high && !plm__isnan(es->x_err_high[i]))
+                            { x_err_hi = es->x_err_high[i]; has_x = 1; }
+                        else if (es->x_err && !plm__isnan(es->x_err[i]))
+                            { x_err_hi = es->x_err[i]; has_x = 1; }
+                        if (has_x && (x_err_lo > 0.0f || x_err_hi > 0.0f)) {
+                            float xlo = plm__map_x(p,
+                                (double)es->x_data[i] - (double)x_err_lo);
+                            float xhi = plm__map_x(p,
+                                (double)es->x_data[i] + (double)x_err_hi);
+                            float xmin = (float)p->plot_area.x0;
+                            float xmax = (float)(p->plot_area.x1 - 1.5f);
+                            if (xlo < xmin) xlo = xmin;
+                            if (xlo > xmax) xlo = xmax;
+                            if (xhi < xmin) xhi = xmin;
+                            if (xhi > xmax) xhi = xmax;
+                            plm__wu_line_thick(fb, xlo, py, xhi, py, lc, lw);
+                            if (cap > 0.0f) {
+                                float y0 = py - cap, y1 = py + cap;
+                                if (y0 < (float)p->plot_area.y0)
+                                    y0 = (float)p->plot_area.y0;
+                                if (y1 > (float)(p->plot_area.y1-1))
+                                    y1 = (float)(p->plot_area.y1-1);
+                                plm__wu_line_thick(fb, xlo, y0, xlo, y1, lc, lw);
+                                plm__wu_line_thick(fb, xhi, y0, xhi, y1, lc, lw);
+                            }
+                        }
+                    }
+                    /* marker */
+                    if (es->style.marker_radius > 0.0f) {
+                        int ix = (int)(px + 0.5f);
+                        int iy = (int)(py + 0.5f);
+                        if (ix >= p->plot_area.x0 && ix < p->plot_area.x1 &&
+                            iy >= p->plot_area.y0 && iy < p->plot_area.y1)
+                            plm__fill_circle(fb, ix, iy,
+                                es->style.marker_radius,
+                                es->style.marker_color);
+                    }
+                }
+            }
+        }
     }
-    if (p->y_label) {
-        /* Draw rotated 90° CW: each glyph is PLM_FONT_H×PLM_FONT_W,
-           stacked bottom-to-top so tilting head left reads correctly. */
+
+    /* 10-12. draw titles, axis labels, and tick labels                */
+    {
         const int S = PLOTMINI_TEXT_SCALE;
-        int char_w = PLM_FONT_H * S;   /* rotated width  */
-        int char_h = PLM_FONT_W * S;   /* rotated height */
-        int advance = PLM_FONT_ADVANCE * S;
-        int len = (int)strlen(p->y_label);
-        int total_h = len * advance;
-        int mid_y = p->plot_area.y0 + (p->plot_area.y1 - p->plot_area.y0) / 2;
-        int start_y = mid_y + total_h / 2;  /* top of text column */
-        int margin = p->margin_left > 0 ? p->margin_left : 60;
-        int cx = cell_x0 + margin / 2;
-        int i;
-        for (i = 0; p->y_label[i]; i++) {
-            int gx = cx - char_w / 2;
-            int gy = start_y - (len - 1 - i) * advance - char_h / 2;
-            plm__draw_char_rot90(fb, gx, gy,
-                (unsigned char)p->y_label[i], PLM_FG_COLOR, S);
+        int x_fs   = p->x_axis.font_scale > 0 ? p->x_axis.font_scale : S;
+        int y_fs   = p->y_axis.font_scale > 0 ? p->y_axis.font_scale : S;
+        int ry_fs  = p->y_axis_right.font_scale > 0 ? p->y_axis_right.font_scale : S;
+        int x_th   = plm__text_height_s(x_fs);
+        int y_th   = plm__text_height_s(y_fs);
+        int ry_th  = plm__text_height_s(ry_fs);
+        int char_w = PLM_FONT_H * S;
+        int char_h = PLM_FONT_W * S;
+        int advance= PLM_FONT_ADVANCE * S;
+        int tick_len = 4 * S;
+        int gap      = 3 * S;
+        int tick_text_gap = 3 * S;
+
+        /* ---- pre-scan: max width of y-axis tick labels (needed for positioning) ---- */
+        int max_ytick_w = 0;
+        {
+            if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
+                int ci;
+                for (ci = 0; ci < p->y_axis.num_categories; ci++) {
+                    const char *label = p->y_axis.categories
+                                        ? p->y_axis.categories[ci] : NULL;
+                    char buf[32];
+                    if (!label) { snprintf(buf, sizeof(buf), "%d", ci); label = buf; }
+                    int w = plm__text_width_s(label, y_fs);
+                    if (w > max_ytick_w) max_ytick_w = w;
+                }
+            } else if (p->y_axis.scale == PLM_LOG) {
+                double log_min = log10(p->y_axis.min);
+                double log_max = log10(p->y_axis.max);
+                double v;
+                for (v = floor(log_min); v <= log_max + 0.5; v += 1.0) {
+                    double val = pow(10.0, v);
+                    char buf[32];
+                    if (p->y_axis.tick_formatter)
+                        p->y_axis.tick_formatter(buf, sizeof(buf), val);
+                    else snprintf(buf, sizeof(buf), "%.4g", val);
+                    int w = plm__text_width_s(buf, y_fs);
+                    if (w > max_ytick_w) max_ytick_w = w;
+                }
+            } else {
+                double range = p->y_axis.max - p->y_axis.min;
+                if (range > 0.0) {
+                    double step = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
+                                                 p->y_axis.tick_hint : 5);
+                    double lo = floor(p->y_axis.min / step) * step;
+                    double v;
+                    for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
+                        char buf[32];
+                        if (p->y_axis.tick_formatter)
+                            p->y_axis.tick_formatter(buf, sizeof(buf), v);
+                        else snprintf(buf, sizeof(buf), "%.4g", v);
+                        int w = plm__text_width_s(buf, y_fs);
+                        if (w > max_ytick_w) max_ytick_w = w;
+                    }
+                }
+            }
+        }
+
+        int max_rytick_w = 0;
+        int has_right = (p->y_axis_right.min != p->y_axis_right.max ||
+                         p->y_axis_right.label != NULL ||
+                         p->y_label_right != NULL);
+        if (has_right) {
+            double range = p->y_axis_right.max - p->y_axis_right.min;
+            if (range <= 0.0) range = 1.0;
+            double step = plm__nice_step(range, p->y_axis_right.tick_hint > 0 ?
+                                         p->y_axis_right.tick_hint : 5);
+            double lo = floor(p->y_axis_right.min / step) * step;
+            double v;
+            for (v = lo; v <= p->y_axis_right.max + step * 0.5; v += step) {
+                char buf[32];
+                if (p->y_axis_right.tick_formatter)
+                    p->y_axis_right.tick_formatter(buf, sizeof(buf), v);
+                else snprintf(buf, sizeof(buf), "%.4g", v);
+                int w = plm__text_width_s(buf, ry_fs);
+                if (w > max_rytick_w) max_rytick_w = w;
+            }
+        }
+
+        /* ==== 10. title ==== */
+        if (p->title) {
+            int tw = plm_text_width(p->title);
+            int cx = cell_x0 + (cell_x1 - cell_x0) / 2;
+            int th = plm_text_height();
+            int avail = p->margin_top > 0 ? p->margin_top : 30;
+            int ty = cell_y0 + avail / 2 + th / 2;
+            plm_draw_text(fb, cx - tw / 2, ty, p->title, PLM_FG_COLOR);
+        }
+
+        /* ---- compute positions ---- */
+        /* X-axis: spine at plot_area.y1-1, tick marks go down, then text below */
+        int x_spine_y   = p->plot_area.y1 - 1;
+        int x_tick_end  = x_spine_y + 1 + tick_len;  /* bottom of tick mark */
+        int x_text_y0   = x_tick_end + tick_text_gap + x_th; /* bottom of x tick text */
+        int x_label_y   = x_text_y0 + x_th + gap;
+
+        /* Left Y-axis: tick marks go left from spine, then text left of that */
+        int y_spine_x   = p->plot_area.x0;
+        int y_tick_left = y_spine_x - tick_len;       /* left end of tick mark */
+        int y_text_right= y_tick_left - tick_text_gap; /* right edge of y tick text */
+        int ylabel_x;
+        {
+            int y_text_left = y_text_right - max_ytick_w;
+            int space = y_text_left - gap - char_w - cell_x0;
+            if (space < 0) space = 0;
+            ylabel_x = cell_x0 + space / 2 + char_w / 2;
+            if (ylabel_x + char_w / 2 > y_text_left - gap)
+                ylabel_x = y_text_left - gap - char_w / 2;
+            if (ylabel_x - char_w / 2 < cell_x0)
+                ylabel_x = cell_x0 + char_w / 2;
+        }
+
+        /* Right Y-axis: tick marks go right from spine, then text right of that */
+        int ry_spine_x  = p->plot_area.x1 - 1;
+        int ry_tick_right= ry_spine_x + 1 + tick_len;
+        int ry_text_x   = ry_tick_right + tick_text_gap;
+        int rylabel_x;
+        if (has_right) {
+            int ry_text_right = ry_text_x + max_rytick_w;
+            int space = cell_x1 - (ry_text_right + gap + char_w);
+            if (space < 0) space = 0;
+            rylabel_x = ry_text_right + gap + space / 2;
+            if (rylabel_x + char_w / 2 > cell_x1)
+                rylabel_x = cell_x1 - char_w / 2;
+        } else {
+            rylabel_x = cell_x1;
+        }
+
+        /* ==== tick marks on axis spines ==== */
+        {
+            plm_color tc = PLM_FG_COLOR;
+            /* X-axis tick marks (on bottom spine, pointing down) */
+            if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 0) {
+                int ci;
+                for (ci = 0; ci < p->x_axis.num_categories; ci++) {
+                    float px = plm__map_x(p, (double)ci);
+                    int ix = (int)(px + 0.5f);
+                    if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                        int y;
+                        for (y = -2*S; y < tick_len; y++)
+                            plm__set_pixel(fb, ix, x_spine_y + 1 + y, tc);
+                    }
+                }
+            } else {
+                double range = p->x_axis.max - p->x_axis.min;
+                double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
+                                             p->x_axis.tick_hint : 5);
+                double lo;
+                if (p->x_axis.scale == PLM_LOG) {
+                    double log_min = log10(p->x_axis.min);
+                    double log_max = log10(p->x_axis.max);
+                    lo = floor(log_min); step = 1.0;
+                    double v;
+                    for (v = lo; v <= log_max + 0.5; v += step) {
+                        double val = pow(10.0, v);
+                        float px = plm__map_x(p, val);
+                        int ix = (int)(px + 0.5f);
+                        if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                            int y;
+                            for (y = 0; y < tick_len; y++)
+                                plm__set_pixel(fb, ix, x_spine_y + 1 + y, tc);
+                        }
+                    }
+                } else {
+                    lo = floor(p->x_axis.min / step) * step;
+                    double v;
+                    for (v = lo; v <= p->x_axis.max + step * 0.5; v += step) {
+                        float px = plm__map_x(p, v);
+                        int ix = (int)(px + 0.5f);
+                        if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                            int y;
+                            for (y = 0; y < tick_len; y++)
+                                plm__set_pixel(fb, ix, x_spine_y + 1 + y, tc);
+                        }
+                    }
+                }
+            }
+            /* Left Y-axis tick marks (pointing left) */
+            if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
+                int ci;
+                for (ci = 0; ci < p->y_axis.num_categories; ci++) {
+                    float py = plm__map_y(p, (double)ci);
+                    int iy = (int)(py + 0.5f);
+                    if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                        int x;
+                        for (x = -2*S; x < tick_len; x++)
+                            plm__set_pixel(fb, y_spine_x - 1 - x, iy, tc);
+                    }
+                }
+            } else {
+                double range = p->y_axis.max - p->y_axis.min;
+                double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
+                                             p->y_axis.tick_hint : 5);
+                double lo;
+                if (p->y_axis.scale == PLM_LOG) {
+                    double log_min = log10(p->y_axis.min);
+                    double log_max = log10(p->y_axis.max);
+                    lo = floor(log_min); step = 1.0;
+                    double v;
+                    for (v = lo; v <= log_max + 0.5; v += step) {
+                        double val = pow(10.0, v);
+                        float py = plm__map_y(p, val);
+                        int iy = (int)(py + 0.5f);
+                        if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                            int x;
+                            for (x = 0; x < tick_len; x++)
+                                plm__set_pixel(fb, y_spine_x - 1 - x, iy, tc);
+                        }
+                    }
+                } else {
+                    lo = floor(p->y_axis.min / step) * step;
+                    double v;
+                    for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
+                        float py = plm__map_y(p, v);
+                        int iy = (int)(py + 0.5f);
+                        if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                            int x;
+                            for (x = 0; x < tick_len; x++)
+                                plm__set_pixel(fb, y_spine_x - 1 - x, iy, tc);
+                        }
+                    }
+                }
+            }
+            /* Right Y-axis tick marks (pointing right) */
+            if (has_right) {
+                double range = p->y_axis_right.max - p->y_axis_right.min;
+                if (range <= 0.0) range = 1.0;
+                double step  = plm__nice_step(range, p->y_axis_right.tick_hint > 0 ?
+                                             p->y_axis_right.tick_hint : 5);
+                double lo = floor(p->y_axis_right.min / step) * step;
+                double v;
+                for (v = lo; v <= p->y_axis_right.max + step * 0.5; v += step) {
+                    double t = (v - p->y_axis_right.min) /
+                               (p->y_axis_right.max - p->y_axis_right.min);
+                    float py = (float)(p->plot_area.y1 - 1 -
+                                       t * (p->plot_area.y1 - p->plot_area.y0));
+                    int iy = (int)(py + 0.5f);
+                    if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                        int x;
+                        for (x = -2*S; x < tick_len; x++)
+                            plm__set_pixel(fb, ry_spine_x + 1 + x, iy, tc);
+                    }
+                }
+            }
+        }
+
+        /* ==== 11. axis labels ==== */
+        if (p->x_label) {
+            int tw = plm_text_width(p->x_label);
+            int cx = p->plot_area.x0 + (p->plot_area.x1 - p->plot_area.x0) / 2;
+            plm_draw_text(fb, cx - tw / 2, x_label_y, p->x_label, PLM_FG_COLOR);
+        }
+        if (p->y_label) {
+            int len = (int)strlen(p->y_label);
+            int total_h = len * advance;
+            int mid_y = p->plot_area.y0 + (p->plot_area.y1 - p->plot_area.y0) / 2;
+            int start_y = mid_y + total_h / 2;
+            int i;
+            for (i = 0; p->y_label[i]; i++) {
+                int gx = ylabel_x - char_w / 2;
+                int gy = start_y - (len - 1 - i) * advance - char_h / 2;
+                plm__draw_char_rot90(fb, gx, gy,
+                    (unsigned char)p->y_label[i], PLM_FG_COLOR, S);
+            }
+        }
+        if (p->y_label_right && has_right) {
+            int len = (int)strlen(p->y_label_right);
+            int total_h = len * advance;
+            int mid_y = p->plot_area.y0 + (p->plot_area.y1 - p->plot_area.y0) / 2;
+            int start_y = mid_y + total_h / 2;
+            int i;
+            for (i = 0; p->y_label_right[i]; i++) {
+                int gx = rylabel_x - char_w / 2;
+                int gy = start_y - (len - 1 - i) * advance - char_h / 2;
+                plm__draw_char_rot90(fb, gx, gy,
+                    (unsigned char)p->y_label_right[i], PLM_FG_COLOR, S);
+            }
+        }
+
+        /* ==== 12. tick labels ==== */
+        /* X-axis tick labels (centred on tick, below tick mark) */
+        if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 0) {
+            int ci;
+            for (ci = 0; ci < p->x_axis.num_categories; ci++) {
+                float px = plm__map_x(p, (double)ci);
+                int ix = (int)(px + 0.5f);
+                if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                    const char *label = p->x_axis.categories
+                                        ? p->x_axis.categories[ci] : NULL;
+                    if (!label) {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%d", ci);
+                        int tw = plm__text_width_s(buf, x_fs);
+                        plm__draw_text_s(fb, ix - tw / 2, x_text_y0, buf, PLM_FG_COLOR, x_fs);
+                    } else {
+                        int tw = plm__text_width_s(label, x_fs);
+                        plm__draw_text_s(fb, ix - tw / 2, x_text_y0, label, PLM_FG_COLOR, x_fs);
+                    }
+                }
+            }
+        } else {
+            double range = p->x_axis.max - p->x_axis.min;
+            double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
+                                         p->x_axis.tick_hint : 5);
+            double lo;
+            if (p->x_axis.scale == PLM_LOG) {
+                double log_min = log10(p->x_axis.min);
+                double log_max = log10(p->x_axis.max);
+                lo = floor(log_min); step = 1.0;
+                double v;
+                for (v = lo; v <= log_max + 0.5; v += step) {
+                    double val = pow(10.0, v);
+                    float px = plm__map_x(p, val);
+                    int ix = (int)(px + 0.5f);
+                    if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                        char buf[32];
+                        if (p->x_axis.tick_formatter)
+                            p->x_axis.tick_formatter(buf, sizeof(buf), val);
+                        else
+                            snprintf(buf, sizeof(buf), "%.4g", val);
+                        int tw = plm__text_width_s(buf, x_fs);
+                        plm__draw_text_s(fb, ix - tw / 2, x_text_y0, buf, PLM_FG_COLOR, x_fs);
+                    }
+                }
+            } else {
+                lo = floor(p->x_axis.min / step) * step;
+                double v;
+                for (v = lo; v <= p->x_axis.max + step * 0.5; v += step) {
+                    float px = plm__map_x(p, v);
+                    int ix = (int)(px + 0.5f);
+                    if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
+                        char buf[32];
+                        if (p->x_axis.tick_formatter)
+                            p->x_axis.tick_formatter(buf, sizeof(buf), v);
+                        else
+                            snprintf(buf, sizeof(buf), "%.4g", v);
+                        int tw = plm__text_width_s(buf, x_fs);
+                        plm__draw_text_s(fb, ix - tw / 2, x_text_y0, buf, PLM_FG_COLOR, x_fs);
+                    }
+                }
+            }
+        }
+        /* Y-axis tick labels (left side, right-aligned, vertically centred on tick) */
+        if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
+            int ci;
+            for (ci = 0; ci < p->y_axis.num_categories; ci++) {
+                float py = plm__map_y(p, (double)ci);
+                int iy = (int)(py + 0.5f);
+                if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                    const char *label = p->y_axis.categories
+                                        ? p->y_axis.categories[ci] : NULL;
+                    if (!label) {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%d", ci);
+                        int tw = plm__text_width_s(buf, y_fs);
+                        plm__draw_text_s(fb, y_text_right - tw, iy + y_th/2, buf, PLM_FG_COLOR, y_fs);
+                    } else {
+                        int tw = plm__text_width_s(label, y_fs);
+                        plm__draw_text_s(fb, y_text_right - tw, iy + y_th/2, label, PLM_FG_COLOR, y_fs);
+                    }
+                }
+            }
+        } else {
+            double range = p->y_axis.max - p->y_axis.min;
+            double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
+                                         p->y_axis.tick_hint : 5);
+            double lo;
+            if (p->y_axis.scale == PLM_LOG) {
+                double log_min = log10(p->y_axis.min);
+                double log_max = log10(p->y_axis.max);
+                lo = floor(log_min); step = 1.0;
+                double v;
+                for (v = lo; v <= log_max + 0.5; v += step) {
+                    double val = pow(10.0, v);
+                    float py = plm__map_y(p, val);
+                    int iy = (int)(py + 0.5f);
+                    if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                        char buf[32];
+                        if (p->y_axis.tick_formatter)
+                            p->y_axis.tick_formatter(buf, sizeof(buf), val);
+                        else
+                            snprintf(buf, sizeof(buf), "%.4g", val);
+                        int tw = plm__text_width_s(buf, y_fs);
+                        plm__draw_text_s(fb, y_text_right - tw, iy + y_th/2, buf, PLM_FG_COLOR, y_fs);
+                    }
+                }
+            } else {
+                lo = floor(p->y_axis.min / step) * step;
+                double v;
+                for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
+                    float py = plm__map_y(p, v);
+                    int iy = (int)(py + 0.5f);
+                    if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                        char buf[32];
+                        if (p->y_axis.tick_formatter)
+                            p->y_axis.tick_formatter(buf, sizeof(buf), v);
+                        else
+                            snprintf(buf, sizeof(buf), "%.4g", v);
+                        int tw = plm__text_width_s(buf, y_fs);
+                        plm__draw_text_s(fb, y_text_right - tw, iy + y_th/2, buf, PLM_FG_COLOR, y_fs);
+                    }
+                }
+            }
+        }
+        /* Right y-axis tick labels */
+        if (has_right) {
+            double range = p->y_axis_right.max - p->y_axis_right.min;
+            if (range <= 0.0) range = 1.0;
+            double step  = plm__nice_step(range, p->y_axis_right.tick_hint > 0 ?
+                                         p->y_axis_right.tick_hint : 5);
+            double lo = floor(p->y_axis_right.min / step) * step;
+            double v;
+            for (v = lo; v <= p->y_axis_right.max + step * 0.5; v += step) {
+                double t = (v - p->y_axis_right.min) /
+                           (p->y_axis_right.max - p->y_axis_right.min);
+                float py = (float)(p->plot_area.y1 - 1 -
+                                   t * (p->plot_area.y1 - p->plot_area.y0));
+                int iy = (int)(py + 0.5f);
+                if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
+                    char buf[32];
+                    if (p->y_axis_right.tick_formatter)
+                        p->y_axis_right.tick_formatter(buf, sizeof(buf), v);
+                    else
+                        snprintf(buf, sizeof(buf), "%.4g", v);
+                    plm__draw_text_s(fb, ry_text_x, iy + ry_th/2, buf, PLM_FG_COLOR, ry_fs);
+                }
+            }
+        }
+    }  /* end of label block */
+
+    /* 13. draw legend (if enabled) */
+    if (p->legend_position != PLM_LEGEND_NONE) {
+        struct { const char *label; plm_color color; int is_line; int is_marker; } entries[64];
+        int entry_count = 0;
+        int si;
+        for (si = 0; si < p->line_count && entry_count < 64; si++) {
+            if (p->lines[si].style.legend) {
+                entries[entry_count].label = p->lines[si].style.legend;
+                entries[entry_count].color = p->lines[si].style.color;
+                entries[entry_count].is_line = 1;
+                entries[entry_count].is_marker = 0;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->scatter_count && entry_count < 64; si++) {
+            if (p->scatters[si].style.legend) {
+                entries[entry_count].label = p->scatters[si].style.legend;
+                entries[entry_count].color = p->scatters[si].style.color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 1;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->errorbar_count && entry_count < 64; si++) {
+            if (p->errorbars[si].style.legend) {
+                entries[entry_count].label = p->errorbars[si].style.legend;
+                entries[entry_count].color = p->errorbars[si].style.line_color;
+                entries[entry_count].is_line = 1;
+                entries[entry_count].is_marker = (p->errorbars[si].style.marker_radius > 0.0f);
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->band_count && entry_count < 64; si++) {
+            if (p->bands[si].style.legend) {
+                entries[entry_count].label = p->bands[si].style.legend;
+                entries[entry_count].color = p->bands[si].style.fill_color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 0;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->bar_count && entry_count < 64; si++) {
+            if (p->bars[si].style.legend) {
+                entries[entry_count].label = p->bars[si].style.legend;
+                entries[entry_count].color = p->bars[si].style.fill_color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = 0;
+                entry_count++;
+            }
+        }
+        for (si = 0; si < p->stem_count && entry_count < 64; si++) {
+            if (p->stems[si].style.legend) {
+                entries[entry_count].label = p->stems[si].style.legend;
+                entries[entry_count].color = p->stems[si].style.line_color;
+                entries[entry_count].is_line = 0;
+                entries[entry_count].is_marker = (p->stems[si].style.marker_radius > 0.0f);
+                entry_count++;
+            }
+        }
+        if (entry_count > 0) {
+            const int S = PLOTMINI_TEXT_SCALE;
+            int max_label_w = 0, i;
+            for (i = 0; i < entry_count; i++) {
+                int w = plm_text_width(entries[i].label);
+                if (w > max_label_w) max_label_w = w;
+            }
+            int sample_w = 14 * S;
+            int entry_h = (PLM_FONT_H + 2) * S;
+            int pad = 6 * S;
+            int box_w = pad + sample_w + 4 * S + max_label_w + pad;
+            int box_h = pad + entry_count * entry_h + pad;
+            int box_x, box_y;
+            int pa_x0 = p->plot_area.x0, pa_y0 = p->plot_area.y0;
+            int pa_x1 = p->plot_area.x1, pa_y1 = p->plot_area.y1;
+            switch (p->legend_position) {
+                case PLM_LEGEND_TOP_RIGHT:
+                    box_x = pa_x1 - box_w - 4; box_y = pa_y0 + 4; break;
+                case PLM_LEGEND_TOP_LEFT:
+                    box_x = pa_x0 + 4; box_y = pa_y0 + 4; break;
+                case PLM_LEGEND_BOTTOM_RIGHT:
+                    box_x = pa_x1 - box_w - 4; box_y = pa_y1 - box_h - 4; break;
+                case PLM_LEGEND_BOTTOM_LEFT:
+                    box_x = pa_x0 + 4; box_y = pa_y1 - box_h - 4; break;
+                case PLM_LEGEND_OUTSIDE_RIGHT:
+                    box_x = pa_x1 + 4; box_y = pa_y0 + 4; break;
+                default: box_x = pa_x1 - box_w - 4; box_y = pa_y0 + 4; break;
+            }
+            { plm_irect bg_r = { box_x, box_y, box_x + box_w, box_y + box_h };
+              plm_fb_fill_rect(fb, bg_r, PLM_BG_COLOR);
+              { int x; for (x = bg_r.x0; x < bg_r.x1; x++) {
+                  plm__set_pixel(fb, x, bg_r.y0, PLM_FG_COLOR);
+                  plm__set_pixel(fb, x, bg_r.y1 - 1, PLM_FG_COLOR); }
+                int y; for (y = bg_r.y0; y < bg_r.y1; y++) {
+                  plm__set_pixel(fb, bg_r.x0, y, PLM_FG_COLOR);
+                  plm__set_pixel(fb, bg_r.x1 - 1, y, PLM_FG_COLOR); } } }
+            for (i = 0; i < entry_count; i++) {
+                int ey = box_y + pad + i * entry_h;
+                int sx = box_x + pad;
+                int sy = ey + entry_h / 2;
+                if (entries[i].is_line) {
+                    plm__wu_line_thick(fb, (float)sx, (float)sy,
+                        (float)(sx + sample_w), (float)sy, entries[i].color, 2.0f);
+                } else if (entries[i].is_marker) {
+                    plm__fill_circle(fb, sx + sample_w / 2, sy, 3.0f, entries[i].color);
+                } else {
+                    plm_irect r = { sx, sy - 3*S, sx + sample_w, sy + 3*S };
+                    plm_fb_fill_rect(fb, r, entries[i].color);
+                }
+                plm_draw_text(fb, sx + sample_w + 4 * S,
+                    ey + PLM_FONT_H * S, entries[i].label, PLM_FG_COLOR);
+            }
         }
     }
 
-    /* 12. draw tick labels */
-    /* X-axis tick labels */
-    if (p->x_axis.scale == PLM_CATEGORICAL && p->x_axis.num_categories > 0) {
-        int ci;
-        for (ci = 0; ci < p->x_axis.num_categories; ci++) {
-            float px = plm__map_x(p, (double)ci);
-            int ix = (int)(px + 0.5f);
-            if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
-                const char *label = p->x_axis.categories
-                                    ? p->x_axis.categories[ci] : NULL;
-                if (!label) {
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%d", ci);
-                    int tw = plm_text_width(buf);
-                    plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
-                                  buf, PLM_FG_COLOR);
-                } else {
-                    int tw = plm_text_width(label);
-                    plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
-                                  label, PLM_FG_COLOR);
-                }
-            }
-        }
-    } else {
-        double range = p->x_axis.max - p->x_axis.min;
-        double step  = plm__nice_step(range, p->x_axis.tick_hint > 0 ?
-                                     p->x_axis.tick_hint : 5);
-        double lo = floor(p->x_axis.min / step) * step;
-        double v;
-        for (v = lo; v <= p->x_axis.max + step * 0.5; v += step) {
-            float px = plm__map_x(p, v);
-            int ix = (int)(px + 0.5f);
-            if (ix >= p->plot_area.x0 && ix < p->plot_area.x1) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4g", v);
-                int tw = plm_text_width(buf);
-                plm_draw_text(fb, ix - tw / 2, p->plot_area.y1 + 15,
-                              buf, PLM_FG_COLOR);
-            }
-        }
-    }
-    /* Y-axis tick labels */
-    if (p->y_axis.scale == PLM_CATEGORICAL && p->y_axis.num_categories > 0) {
-        int ci;
-        for (ci = 0; ci < p->y_axis.num_categories; ci++) {
-            float py = plm__map_y(p, (double)ci);
-            int iy = (int)(py + 0.5f);
-            if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
-                const char *label = p->y_axis.categories
-                                    ? p->y_axis.categories[ci] : NULL;
-                if (!label) {
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%d", ci);
-                    plm_draw_text(fb, p->plot_area.x0 - plm_text_width(buf) - 4,
-                                  iy + 3, buf, PLM_FG_COLOR);
-                } else {
-                    plm_draw_text(fb, p->plot_area.x0 - plm_text_width(label) - 4,
-                                  iy + 3, label, PLM_FG_COLOR);
-                }
-            }
-        }
-    } else {
-        double range = p->y_axis.max - p->y_axis.min;
-        double step  = plm__nice_step(range, p->y_axis.tick_hint > 0 ?
-                                     p->y_axis.tick_hint : 5);
-        double lo = floor(p->y_axis.min / step) * step;
-        double v;
-        for (v = lo; v <= p->y_axis.max + step * 0.5; v += step) {
-            float py = plm__map_y(p, v);
-            int iy = (int)(py + 0.5f);
-            if (iy >= p->plot_area.y0 && iy < p->plot_area.y1) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4g", v);
-                plm_draw_text(fb, p->plot_area.x0 - plm_text_width(buf) - 4,
-                              iy + 3, buf, PLM_FG_COLOR);
-            }
-        }
-    }
 }
 
 /* Public: render a single plot (fills the whole framebuffer). */
@@ -1780,10 +3132,10 @@ void plm_figure_init(plm_figure *fig, int nrows, int ncols) {
         plm_plot *p = &fig->plots[i];
         plm_plot_init(p);
         /* Subplot cells have tighter space: reduce default margins. */
-        p->margin_left   = 45;
-        p->margin_top    = 22;
-        p->margin_right  = 12;
-        p->margin_bottom = 28;
+        p->margin_left   = 55;
+        p->margin_top    = 30;
+        p->margin_right  = 20;
+        p->margin_bottom = 38;
     }
 }
 
